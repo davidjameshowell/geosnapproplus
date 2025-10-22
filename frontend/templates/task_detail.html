@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Task Details{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <a href="/tasks" class="text-blue-600 hover:text-blue-800">&larr; Back to All Tasks</a>
+</div>
+
+<div class="bg-white rounded-lg shadow-lg p-6">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <div class="flex items-center space-x-2 mb-2">
+                <span class="px-3 py-1 text-sm font-semibold rounded {% if task.type == 'screenshot' %}bg-blue-100 text-blue-800{% else %}bg-purple-100 text-purple-800{% endif %}">
+                    {{ task.type }}
+                </span>
+                <span id="status-badge" class="px-3 py-1 text-sm font-semibold rounded {% if task.status == 'completed' %}bg-green-100 text-green-800{% elif task.status == 'running' %}bg-blue-100 text-blue-800{% elif task.status == 'failed' %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                    {{ task.status }}
+                </span>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-900">Task Details</h1>
+        </div>
+        <button onclick="deleteTask('{{ task.id }}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">
+            Delete Task
+        </button>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div>
+            <h2 class="text-lg font-semibold mb-3">Task Information</h2>
+            <dl class="space-y-2">
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Task ID</dt>
+                    <dd class="text-sm text-gray-900 font-mono">{{ task.id }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">URL</dt>
+                    <dd class="text-sm text-gray-900 break-all">{{ task.url }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Timestamp</dt>
+                    <dd class="text-sm text-gray-900">{{ task.timestamp }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Type</dt>
+                    <dd class="text-sm text-gray-900" id="task-type">{{ task.type }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Format</dt>
+                    <dd class="text-sm text-gray-900" id="task-format">{{ task.result_format }}</dd>
+                </div>
+            </dl>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold mb-3">Request Parameters</h2>
+            <div class="bg-gray-50 rounded p-3 max-h-64 overflow-y-auto">
+                <pre class="text-xs text-gray-800">{{ task.request_params | tojson(indent=2) }}</pre>
+            </div>
+        </div>
+    </div>
+
+    <div class="border-t pt-6">
+        <h2 class="text-lg font-semibold mb-4">Result</h2>
+
+        <div id="pending-box" class="border rounded-lg p-4 bg-yellow-50 text-yellow-800" {% if task.status not in ['queued','running'] %}style="display:none"{% endif %}>
+            <p>This task is currently <strong id="pending-status">{{ task.status }}</strong>. Waiting for completion...</p>
+        </div>
+        <div id="error-box" class="border rounded-lg p-4 bg-red-50 text-red-800" {% if task.status != 'failed' %}style="display:none"{% endif %}>
+            <p>Task failed.</p>
+            <pre id="error-text" class="text-xs mt-2">{% if task.error %}{{ task.error }}{% endif %}</pre>
+        </div>
+
+        <div id="result-section" class="{% if task.status != 'completed' %}hidden{% endif %}">
+            <div id="screenshot-section" class="border rounded-lg p-4 bg-gray-50" {% if not (task.status == 'completed' and task.type == 'screenshot') %}style="display:none"{% endif %}>
+                <img id="result-image" src="{% if task.status == 'completed' and task.type == 'screenshot' %}/media/{{ task.result_file }}{% endif %}" alt="Screenshot" class="max-w-full h-auto mx-auto shadow-lg">
+            </div>
+            <div id="recording-section" class="border rounded-lg p-4 bg-gray-50" {% if not (task.status == 'completed' and task.type == 'recording') %}style="display:none"{% endif %}>
+                <video id="result-video" controls class="max-w-full h-auto mx-auto shadow-lg">
+                    <source id="video-source" src="{% if task.status == 'completed' and task.type == 'recording' %}/media/{{ task.result_file }}{% endif %}" type="video/webm">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            <div class="mt-4" id="download-section" {% if task.status != 'completed' %}style="display:none"{% endif %}>
+                <a id="download-link" href="{% if task.status == 'completed' %}/media/{{ task.result_file }}{% endif %}" download class="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">
+                    Download {{ 'Screenshot' if task.type == 'screenshot' else 'Recording' }}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function deleteTask(taskId) {
+        if (!confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/task/${taskId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                // Redirect to tasks page after deletion
+                window.location.href = '/tasks';
+            } else {
+                alert('Failed to delete task');
+            }
+        } catch (error) {
+            alert('Error deleting task: ' + error.message);
+        }
+    }
+
+    // WebSocket live updates
+    (function() {
+        const taskId = "{{ task.id }}";
+        const backendWsUrl = (function() {
+            const loc = window.location;
+            const proto = loc.protocol === 'https:' ? 'wss' : 'ws';
+            // backend is exposed on same host at 8000 in compose
+            const host = loc.hostname + ':8000';
+            return `${proto}://${host}/ws/tasks/${taskId}`;
+        })();
+
+        let ws;
+        try {
+            ws = new WebSocket(backendWsUrl);
+        } catch (e) {
+            console.warn('WS not available', e);
+            return;
+        }
+
+        const statusBadge = document.getElementById('status-badge');
+        const pendingBox = document.getElementById('pending-box');
+        const pendingStatus = document.getElementById('pending-status');
+        const taskTypeEl = document.getElementById('task-type');
+        const taskFormatEl = document.getElementById('task-format');
+        const errorBox = document.getElementById('error-box');
+        const errorText = document.getElementById('error-text');
+        const resultSection = document.getElementById('result-section');
+        const screenshotSection = document.getElementById('screenshot-section');
+        const recordingSection = document.getElementById('recording-section');
+        const downloadSection = document.getElementById('download-section');
+
+        function setStatus(text) {
+            if (statusBadge) statusBadge.textContent = text;
+            if (pendingStatus) pendingStatus.textContent = text;
+            if (statusBadge) {
+                statusBadge.className = 'px-3 py-1 text-sm font-semibold rounded ' + (
+                    text === 'completed' ? 'bg-green-100 text-green-800' :
+                    text === 'running' ? 'bg-blue-100 text-blue-800' :
+                    text === 'failed' ? 'bg-red-100 text-red-800' :
+                    'bg-yellow-100 text-yellow-800'
+                );
+            }
+        }
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (!data || data.task_id !== taskId) return;
+                if (data.status === 'running' || data.status === 'queued') {
+                    if (pendingBox) pendingBox.style.display = '';
+                    if (errorBox) errorBox.style.display = 'none';
+                    if (resultSection) resultSection.classList.add('hidden');
+                    setStatus(data.status);
+                } else if (data.status === 'failed') {
+                    setStatus('failed');
+                    if (pendingBox) pendingBox.style.display = 'none';
+                    if (resultSection) resultSection.classList.add('hidden');
+                    if (errorBox) {
+                        errorBox.style.display = '';
+                        if (errorText) errorText.textContent = data.error || '';
+                    }
+                } else if (data.status === 'completed') {
+                    setStatus('completed');
+                    if (pendingBox) pendingBox.style.display = 'none';
+                    if (errorBox) errorBox.style.display = 'none';
+                    // Refresh task info to get result file without reloading full page
+                    fetch(`/api/task/${taskId}`)
+                      .then(r => r.json())
+                      .then(payload => {
+                        const t = payload && payload.task ? payload.task : null;
+                        if (!t) return;
+                        if (taskTypeEl) taskTypeEl.textContent = t.type;
+                        if (taskFormatEl) taskFormatEl.textContent = t.result_format || '';
+                        const downloadLink = document.getElementById('download-link');
+                        if (downloadLink && t.result_file) {
+                            downloadLink.href = `/media/${t.result_file}`;
+                        }
+                        if (t.type === 'screenshot') {
+                            const img = document.getElementById('result-image');
+                            if (img && t.result_file) {
+                                img.src = `/media/${t.result_file}`;
+                            }
+                            if (screenshotSection) screenshotSection.style.display = '';
+                            if (recordingSection) recordingSection.style.display = 'none';
+                        } else if (t.type === 'recording') {
+                            const source = document.getElementById('video-source');
+                            const video = document.getElementById('result-video');
+                            if (source && video && t.result_file) {
+                                source.src = `/media/${t.result_file}`;
+                                video.load();
+                            }
+                            if (screenshotSection) screenshotSection.style.display = 'none';
+                            if (recordingSection) recordingSection.style.display = '';
+                        }
+                        if (resultSection) resultSection.classList.remove('hidden');
+                        if (downloadSection) downloadSection.style.display = '';
+                      })
+                      .catch(() => {});
+                }
+            } catch (e) {
+                console.warn('Bad WS message', e);
+            }
+        };
+    })();
+</script>
+{% endblock %}

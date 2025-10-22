@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Screenshot App - Home{% endblock %}
+
+{% block content %}
+<div class="text-center">
+    <h1 class="text-4xl font-bold text-gray-900 mb-4">Screenshot & Recording Service</h1>
+    <p class="text-xl text-gray-600 mb-8">Capture screenshots and record videos of any website</p>
+    
+    <div class="flex justify-center space-x-4">
+        <a href="/submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition">
+            Create New Task
+        </a>
+        <a href="/tasks" class="bg-gray-200 text-gray-800 px-6 py-3 rounded-lg hover:bg-gray-300 transition">
+            View All Tasks
+        </a>
+    </div>
+
+    <div class="mt-16 grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <div class="bg-white p-6 rounded-lg shadow">
+            <h2 class="text-2xl font-semibold mb-3">📸 Screenshots</h2>
+            <p class="text-gray-600">Capture full-page or viewport screenshots in PNG or JPEG format with custom dimensions and quality settings.</p>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow">
+            <h2 class="text-2xl font-semibold mb-3">🎥 Recordings</h2>
+            <p class="text-gray-600">Record website interactions with automatic scrolling and configurable duration up to 120 seconds.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

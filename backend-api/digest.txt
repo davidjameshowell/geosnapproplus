@@ -1,0 +1,980 @@
+Directory structure:
+└── geosnappro-thefinal/
+    ├── docker-compose.yml
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── screenshot_api.py
+    ├── test_client.py
+    ├── validate_setup.py
+    └── web_recorder.py
+
+================================================
+FILE: docker-compose.yml
+================================================
+services:
+  screenshot-api:
+    build: .
+    container_name: camoufox-screenshot-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./temp_screenshots:/app/temp_screenshots
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2
+
+
+
+================================================
+FILE: Dockerfile
+================================================
+# Use Python 3.11 slim image as base
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for browsers
+RUN apt-get update && apt-get install -y \
+    wget \
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    xdg-utils \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers
+RUN playwright install chromium firefox && camoufox fetch
+
+# Copy application files
+COPY . .
+
+# Create directory for temporary screenshots
+RUN mkdir -p /app/temp_screenshots
+
+# Validate setup during build
+#RUN python validate_setup.py
+
+# Expose API port
+EXPOSE 8000
+
+# Start the API service
+CMD ["uvicorn", "screenshot_api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
+
+
+================================================
+FILE: requirements.txt
+================================================
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+playwright==1.40.0
+camoufox==0.3.0
+pydantic==2.5.0
+python-multipart==0.0.6
+pillow==10.1.0
+aiofiles==23.2.1
+
+
+
+================================================
+FILE: screenshot_api.py
+================================================
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response, JSONResponse
+from pydantic import BaseModel, Field, validator
+from typing import Optional, Literal
+import asyncio
+from playwright.async_api import async_playwright
+from camoufox.async_api import AsyncCamoufox
+import base64
+import logging
+from datetime import datetime
+import os
+import hashlib
+from PIL import Image
+import io
+import numpy as np
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Camoufox Screenshot API",
+    description="API service for taking screenshots using Camoufox with Playwright",
+    version="1.0.0"
+)
+
+def auto_crop_image(image_buffer: bytes, threshold: int = 10) -> bytes:
+    """
+    Automatically crop empty space around an image
+    
+    Args:
+        image_buffer: Raw image bytes
+        threshold: Tolerance for considering pixels as "empty" (0-255)
+    
+    Returns:
+        Cropped image bytes
+    """
+    try:
+        # Open image from buffer
+        img = Image.open(io.BytesIO(image_buffer))
+        
+        # Convert to RGB if not already
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Convert to numpy array for easier processing
+        img_array = np.array(img)
+        
+        # Find non-empty pixels (pixels that are not close to white/background)
+        # We'll consider a pixel "empty" if all RGB values are above (255 - threshold)
+        non_empty_mask = ~np.all(img_array >= (255 - threshold), axis=2)
+        
+        # Find the bounding box of non-empty content
+        rows = np.any(non_empty_mask, axis=1)
+        cols = np.any(non_empty_mask, axis=0)
+        
+        # If no content found, return original image
+        if not np.any(rows) or not np.any(cols):
+            return image_buffer
+        
+        # Get the bounding box coordinates
+        rmin, rmax = np.where(rows)[0][[0, -1]]
+        cmin, cmax = np.where(cols)[0][[0, -1]]
+        
+        # Add small padding to avoid cutting too close
+        padding = 5
+        rmin = max(0, rmin - padding)
+        rmax = min(img_array.shape[0] - 1, rmax + padding)
+        cmin = max(0, cmin - padding)
+        cmax = min(img_array.shape[1] - 1, cmax + padding)
+        
+        # Crop the image
+        cropped_img = img.crop((cmin, rmin, cmax + 1, rmax + 1))
+        
+        # Convert back to bytes
+        output_buffer = io.BytesIO()
+        format_type = 'PNG' if img.format == 'PNG' else 'JPEG'
+        cropped_img.save(output_buffer, format=format_type)
+        
+        return output_buffer.getvalue()
+        
+    except Exception as e:
+        logger.warning(f"Auto-crop failed: {str(e)}, returning original image")
+        return image_buffer
+
+class ScreenshotRequest(BaseModel):
+    url: str = Field(..., description="URL of the webpage to screenshot")
+    viewport_width: int = Field(1920, ge=320, le=3840, description="Viewport width in pixels")
+    viewport_height: int = Field(1080, ge=240, le=2160, description="Viewport height in pixels")
+    full_page: bool = Field(False, description="Capture full page or just viewport")
+    image_type: Literal["png", "jpeg"] = Field("png", description="Image format")
+    quality: Optional[int] = Field(None, ge=0, le=100, description="Image quality (0-100, only for JPEG)")
+    wait_until: Literal["load", "domcontentloaded", "networkidle"] = Field("networkidle", description="When to consider navigation succeeded")
+    wait_for_selector: Optional[str] = Field(None, description="CSS selector to wait for before taking screenshot")
+    wait_timeout: int = Field(30000, ge=1000, le=60000, description="Maximum wait time in milliseconds")
+    clip_x: Optional[int] = Field(None, description="X coordinate for clipping area")
+    clip_y: Optional[int] = Field(None, description="Y coordinate for clipping area")
+    clip_width: Optional[int] = Field(None, description="Width of clipping area")
+    clip_height: Optional[int] = Field(None, description="Height of clipping area")
+    user_agent: Optional[str] = Field(None, description="Custom user agent string")
+    auto_crop: bool = Field(False, description="Automatically crop empty space around the screenshot")
+    
+    @validator('quality')
+    def validate_quality(cls, v, values):
+        if v is not None and values.get('image_type') == 'png':
+            raise ValueError("Quality parameter is only valid for JPEG format")
+        return v
+
+@app.get("/")
+async def root():
+    return {
+        "service": "Camoufox Screenshot API",
+        "status": "running",
+        "endpoints": {
+            "screenshot": "/screenshot",
+            "health": "/health"
+        }
+    }
+
+@app.post("/screenshot")
+async def take_screenshot(request: ScreenshotRequest):
+    """
+    Take a screenshot of a webpage using Camoufox with Playwright
+    """
+    try:
+        logger.info(f"Processing screenshot request for URL: {request.url}")
+        
+        # Initialize Camoufox
+        async with AsyncCamoufox(headless=True) as browser:
+            
+            # Create context with viewport and user agent
+            context_options = {
+                'viewport': {'width': request.viewport_width, 'height': request.viewport_height}
+            }
+            if request.user_agent:
+                context_options['user_agent'] = request.user_agent
+                
+            context = await browser.new_context(**context_options)
+            page = await context.new_page()
+            
+            # Navigate to the URL
+            await page.goto(request.url, wait_until=request.wait_until, timeout=request.wait_timeout)
+            
+            # Wait for specific selector if provided
+            if request.wait_for_selector:
+                await page.wait_for_selector(request.wait_for_selector, timeout=request.wait_timeout)
+            
+            # Prepare screenshot options
+            screenshot_options = {
+                'full_page': request.full_page,
+                'type': request.image_type
+            }
+            
+            # Add quality for JPEG [[1]]
+            if request.image_type == 'jpeg' and request.quality is not None:
+                screenshot_options['quality'] = request.quality
+            
+            # Add clipping area if specified [[10]]
+            if all([request.clip_x is not None, request.clip_y is not None, 
+                   request.clip_width is not None, request.clip_height is not None]):
+                screenshot_options['clip'] = {
+                    'x': request.clip_x,
+                    'y': request.clip_y,
+                    'width': request.clip_width,
+                    'height': request.clip_height
+                }
+            
+            # Take the screenshot [[4]]
+            screenshot_buffer = await page.screenshot(**screenshot_options)
+            
+            # Clean up
+            await context.close()
+            
+            # Apply auto-cropping if requested
+            if request.auto_crop:
+                logger.info(f"Applying auto-crop to screenshot for {request.url}")
+                screenshot_buffer = auto_crop_image(screenshot_buffer)
+            
+            # Determine content type
+            content_type = "image/png" if request.image_type == "png" else "image/jpeg"
+            
+            logger.info(f"Screenshot captured successfully for {request.url}")
+            
+            # Return the image directly
+            return Response(
+                content=screenshot_buffer,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"inline; filename=screenshot.{request.image_type}",
+                    "X-Screenshot-URL": request.url,
+                    "X-Screenshot-Timestamp": datetime.utcnow().isoformat()
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"Screenshot failed for {request.url}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Screenshot capture failed: {str(e)}")
+
+@app.get("/screenshot")
+async def take_screenshot_get(
+    url: str = Query(..., description="URL of the webpage to screenshot"),
+    viewport_width: int = Query(1920, ge=320, le=3840),
+    viewport_height: int = Query(1080, ge=240, le=2160),
+    full_page: bool = Query(False),
+    image_type: Literal["png", "jpeg"] = Query("png"),
+    quality: Optional[int] = Query(None, ge=0, le=100),
+    wait_until: Literal["load", "domcontentloaded", "networkidle"] = Query("networkidle"),
+    wait_for_selector: Optional[str] = Query(None),
+    wait_timeout: int = Query(30000, ge=1000, le=60000),
+    auto_crop: bool = Query(False, description="Automatically crop empty space around the screenshot")
+):
+    """
+    Take a screenshot via GET request (simpler parameters)
+    """
+    request = ScreenshotRequest(
+        url=url,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        full_page=full_page,
+        image_type=image_type,
+        quality=quality,
+        wait_until=wait_until,
+        wait_for_selector=wait_for_selector,
+        wait_timeout=wait_timeout,
+        auto_crop=auto_crop
+    )
+    return await take_screenshot(request)
+
+@app.post("/screenshot/base64")
+async def take_screenshot_base64(request: ScreenshotRequest):
+    """
+    Take a screenshot and return it as base64 encoded string
+    """
+    try:
+        logger.info(f"Processing base64 screenshot request for URL: {request.url}")
+        
+        async with AsyncCamoufox(headless=True) as browser:
+            
+            # Create context with viewport and user agent
+            context_options = {
+                'viewport': {'width': request.viewport_width, 'height': request.viewport_height}
+            }
+            if request.user_agent:
+                context_options['user_agent'] = request.user_agent
+                
+            context = await browser.new_context(**context_options)
+            page = await context.new_page()
+            
+            await page.goto(request.url, wait_until=request.wait_until, timeout=request.wait_timeout)
+            
+            if request.wait_for_selector:
+                await page.wait_for_selector(request.wait_for_selector, timeout=request.wait_timeout)
+            
+            screenshot_options = {
+                'full_page': request.full_page,
+                'type': request.image_type
+            }
+            
+            if request.image_type == 'jpeg' and request.quality is not None:
+                screenshot_options['quality'] = request.quality
+            
+            # Take screenshot [[1]]
+            screenshot_buffer = await page.screenshot(**screenshot_options)
+            
+            await context.close()
+            
+            # Apply auto-cropping if requested
+            if request.auto_crop:
+                logger.info(f"Applying auto-crop to base64 screenshot for {request.url}")
+                screenshot_buffer = auto_crop_image(screenshot_buffer)
+            
+            # Convert to base64
+            base64_image = base64.b64encode(screenshot_buffer).decode('utf-8')
+            
+            return JSONResponse(
+                content={
+                    "url": request.url,
+                    "image": base64_image,
+                    "format": request.image_type,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "settings": {
+                        "viewport": f"{request.viewport_width}x{request.viewport_height}",
+                        "full_page": request.full_page
+                    }
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"Base64 screenshot failed for {request.url}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Screenshot capture failed: {str(e)}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "Camoufox Screenshot API",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/test-screenshot")
+async def test_screenshot():
+    """Quick test endpoint to verify screenshot functionality"""
+    try:
+        async with AsyncCamoufox(headless=True) as browser:
+            context = await browser.new_context()
+            page = await context.new_page()
+            
+            await page.goto("https://example.com")
+            screenshot = await page.screenshot()
+            
+            await context.close()
+            
+            return Response(
+                content=screenshot,
+                media_type="image/png",
+                headers={"Content-Disposition": "inline; filename=test.png"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+================================================
+FILE: test_client.py
+================================================
+"""
+Test client for the screenshot API
+"""
+import requests
+import base64
+from PIL import Image
+from io import BytesIO
+
+BASE_URL = "http://localhost:8000"
+
+def test_basic_screenshot():
+    """Test basic screenshot functionality"""
+    print("Testing basic screenshot...")
+    
+    response = requests.post(
+        f"{BASE_URL}/screenshot",
+        json={
+            "url": "https://example.com",
+            "viewport_width": 1920,
+            "viewport_height": 1080,
+            "full_page": False,
+            "image_type": "png"
+        }
+    )
+    
+    if response.status_code == 200:
+        # Save the screenshot
+        with open("test_screenshot.png", "wb") as f:
+            f.write(response.content)
+        print("✓ Screenshot saved as test_screenshot.png")
+    else:
+        print(f"✗ Failed: {response.text}")
+
+def test_full_page_jpeg():
+    """Test full page JPEG screenshot"""
+    print("Testing full page JPEG screenshot...")
+    
+    response = requests.get(
+        f"{BASE_URL}/screenshot",
+        params={
+            "url": "https://example.com",
+            "full_page": True,
+            "image_type": "jpeg",
+            "quality": 85
+        }
+    )
+    
+    if response.status_code == 200:
+        with open("test_fullpage.jpg", "wb") as f:
+            f.write(response.content)
+        print("✓ Full page screenshot saved as test_fullpage.jpg")
+    else:
+        print(f"✗ Failed: {response.text}")
+
+def test_base64_screenshot():
+    """Test base64 encoded screenshot"""
+    print("Testing base64 screenshot...")
+    
+    response = requests.post(
+        f"{BASE_URL}/screenshot/base64",
+        json={
+            "url": "https://example.com",
+            "viewport_width": 1280,
+            "viewport_height": 720,
+            "image_type": "png"
+        }
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        image_data = base64.b64decode(data["image"])
+        
+        # Convert to PIL Image to verify
+        img = Image.open(BytesIO(image_data))
+        img.save("test_base64.png")
+        print(f"✓ Base64 screenshot saved. Size: {img.size}")
+    else:
+        print(f"✗ Failed: {response.text}")
+
+if __name__ == "__main__":
+    test_basic_screenshot()
+    test_full_page_jpeg()
+    test_base64_screenshot()
+
+
+
+================================================
+FILE: validate_setup.py
+================================================
+"""
+Validation script to ensure Camoufox screenshot functionality works
+"""
+import asyncio
+from camoufox.async_api import AsyncCamoufox
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+async def validate_screenshot_capability():
+    """Validate that we can take screenshots with Camoufox"""
+    try:
+        logger.info("Validating Camoufox screenshot capabilities...")
+        
+        async with AsyncCamoufox(headless=True) as browser:
+            context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+            page = await context.new_page()
+            
+            # Test navigation
+            await page.goto("https://example.com")
+            logger.info("✓ Page navigation successful")
+            
+            # Test viewport screenshot
+            viewport_screenshot = await page.screenshot(type='png')
+            logger.info(f"✓ Viewport screenshot captured: {len(viewport_screenshot)} bytes")
+            
+            # Test full page screenshot
+            fullpage_screenshot = await page.screenshot(full_page=True, type='png')
+            logger.info(f"✓ Full page screenshot captured: {len(fullpage_screenshot)} bytes")
+            
+            # Test JPEG with quality
+            jpeg_screenshot = await page.screenshot(type='jpeg', quality=80)
+            logger.info(f"✓ JPEG screenshot captured: {len(jpeg_screenshot)} bytes")
+            
+            # Test clipped screenshot
+            clipped_screenshot = await page.screenshot(
+                clip={'x': 0, 'y': 0, 'width': 500, 'height': 500}
+            )
+            logger.info(f"✓ Clipped screenshot captured: {len(clipped_screenshot)} bytes")
+            
+            await context.close()
+            
+        logger.info("✅ All screenshot validation tests passed!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Validation failed: {str(e)}")
+        return False
+
+async def main():
+    if not await validate_screenshot_capability():
+        logger.error("Screenshot validation failed!")
+        sys.exit(1)
+    
+    logger.info("System ready for screenshot operations!")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+================================================
+FILE: web_recorder.py
+================================================
+import time
+from typing import Optional, Tuple, Dict, Any
+from playwright.sync_api import sync_playwright, Page, Browser
+import argparse
+from pathlib import Path
+import json
+import urllib.parse
+
+class WebPageRecorder:
+    def __init__(self, 
+                 url: str,
+                 viewport_size: Tuple[int, int] = (1920, 1080),
+                 output_path: str = "recording.webm",
+                 scroll_speed: int = 100,
+                 timeout_seconds: int = 30,
+                 browserless_host: str = "localhost",
+                 browserless_port: int = 3000,
+                 use_browserless: bool = False,
+                 browserless_options: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the WebPageRecorder.
+        
+        Args:
+            url: The URL to connect to (can be http, https, or wss)
+            viewport_size: Tuple of (width, height) for viewport
+            output_path: Path to save the video file
+            scroll_speed: Pixels to scroll per iteration (lower = smoother)
+            timeout_seconds: Maximum time to record/scroll
+            browserless_host: Browserless container host (default: localhost)
+            browserless_port: Browserless container port (default: 3000)
+            use_browserless: Whether to use Browserless instead of local browser
+            browserless_options: Additional options for Browserless API (blockAds, token, etc.)
+        """
+        self.url = url
+        self.viewport_size = viewport_size
+        self.output_path = output_path
+        self.scroll_speed = scroll_speed
+        self.timeout_seconds = timeout_seconds
+        self.browserless_host = browserless_host
+        self.browserless_port = browserless_port
+        self.use_browserless = use_browserless
+        self.browserless_options = browserless_options or {}
+        
+    def _build_browserless_ws_url(self) -> str:
+        """
+        Build the WebSocket URL for connecting to Browserless using CDP.
+        
+        Returns:
+            WebSocket URL for Browserless CDP connection
+        """
+        base_url = f"ws://{self.browserless_host}:{self.browserless_port}"
+        
+        # Build query parameters for CDP connection
+        params = {}
+        
+        # Add supported parameters for CDP connection
+        for key in ['token', 'trackingId', 'timeout', 'blockAds']:
+            if key in self.browserless_options:
+                params[key] = str(self.browserless_options[key])
+        
+        # Add launch options - ensure proper window size for recording
+        launch_options = self.browserless_options.get('launch', {})
+        if isinstance(launch_options, str):
+            try:
+                launch_options = json.loads(launch_options)
+            except json.JSONDecodeError:
+                launch_options = {}
+        elif not isinstance(launch_options, dict):
+            launch_options = {}
+        
+        # For CDP connections, we'll set launch options but they might not take effect
+        # on already-running browser instances, so we'll handle sizing programmatically
+        if launch_options:
+            params['launch'] = json.dumps(launch_options)
+        
+        # Build the full URL with query parameters
+        if params:
+            query_string = urllib.parse.urlencode(params)
+            return f"{base_url}?{query_string}"
+        else:
+            return base_url
+        
+    def smooth_scroll_to_bottom(self, page: Page) -> None:
+        """
+        Smoothly scroll to the bottom of the page or until timeout.
+        """
+        start_time = time.time()
+        last_height = 0
+        stable_count = 0
+        
+        while True:
+            # Check timeout
+            if time.time() - start_time > self.timeout_seconds:
+                print(f"Timeout reached after {self.timeout_seconds} seconds")
+                break
+                
+            # Get current scroll height
+            current_height = page.evaluate("document.body.scrollHeight")
+            
+            # Check if page height hasn't changed (reached bottom)
+            if current_height == last_height:
+                stable_count += 1
+                if stable_count > 5:  # Wait for 5 checks to confirm we're at bottom
+                    print("Reached bottom of page")
+                    break
+            else:
+                stable_count = 0
+                last_height = current_height
+            
+            # Get current scroll position
+            scroll_position = page.evaluate("window.pageYOffset")
+            
+            # Check if we've reached the bottom
+            visible_height = page.evaluate("window.innerHeight")
+            if scroll_position + visible_height >= current_height - 10:
+                # For infinite scroll pages, wait a bit for new content
+                page.wait_for_timeout(1000)
+            else:
+                # Smooth scroll by small increments
+                page.evaluate(f"window.scrollBy(0, {self.scroll_speed})")
+                page.wait_for_timeout(50)  # Small delay for smooth animation
+    
+    def record_with_scroll(self, scroll: bool = True) -> None:
+        """
+        Record the webpage with optional scrolling.
+        """
+        with sync_playwright() as p:
+            if self.use_browserless:
+                # Connect to Browserless using CDP WebSocket endpoint
+                ws_url = self._build_browserless_ws_url()
+                print(f"Connecting to Browserless via CDP at: {ws_url}")
+                browser = p.chromium.connect_over_cdp(ws_url)
+            else:
+                # Launch browser locally with viewport settings
+                browser = p.chromium.launch(
+                    headless=False  # Set to True for headless operation
+                )
+            
+            # For Browserless, we'll set initial dimensions, but may adjust based on actual viewport
+            initial_video_width = self.viewport_size[0]
+            initial_video_height = self.viewport_size[1]
+            
+            # Create context with viewport and video recording
+            context = browser.new_context(
+                viewport={
+                    'width': self.viewport_size[0],
+                    'height': self.viewport_size[1]
+                },
+                device_scale_factor=1,  # Ensure 1:1 pixel ratio
+                record_video_dir="videos/",
+                record_video_size={
+                    'width': initial_video_width,
+                    'height': initial_video_height
+                }
+            )
+            
+            # Create a new page
+            page = context.new_page()
+            
+            # For Browserless connections, diagnose and fix viewport issues
+            if self.use_browserless:
+                try:
+                    # Set the viewport size
+                    page.set_viewport_size({'width': self.viewport_size[0], 'height': self.viewport_size[1]})
+                    
+                    # Get CDP session for debugging
+                    cdp_session = context.new_cdp_session(page)
+                    
+                    # Get current window info for debugging
+                    try:
+                        windows_result = cdp_session.send('Browser.getWindowForTarget')
+                        window_id = windows_result.get('windowId', 1)
+                        
+                        # Get current window bounds
+                        bounds_result = cdp_session.send('Browser.getWindowBounds', {'windowId': window_id})
+                        current_bounds = bounds_result.get('bounds', {})
+                        print(f"Current browser window bounds: {current_bounds}")
+                        
+                        # Force the window to be exactly our viewport size with no chrome
+                        cdp_session.send('Browser.setWindowBounds', {
+                            'windowId': window_id,
+                            'bounds': {
+                                'left': 0,
+                                'top': 0,
+                                'width': self.viewport_size[0],
+                                'height': self.viewport_size[1],
+                                'windowState': 'normal'
+                            }
+                        })
+                        print(f"✅ Set browser window to exact viewport size: {self.viewport_size[0]}x{self.viewport_size[1]}")
+                        
+                    except Exception as window_error:
+                        print(f"Window management error: {window_error}")
+                    
+                    # Double-check viewport after navigation by setting it again
+                    print(f"Setting viewport to: {self.viewport_size[0]}x{self.viewport_size[1]}")
+                    
+                except Exception as e:
+                    print(f"Viewport setup error: {e}")
+                    
+                # Get actual viewport dimensions to debug recording size mismatch
+                try:
+                    actual_viewport = page.evaluate("""() => {
+                        return {
+                            width: window.innerWidth,
+                            height: window.innerHeight,
+                            outerWidth: window.outerWidth,
+                            outerHeight: window.outerHeight,
+                            screenWidth: screen.width,
+                            screenHeight: screen.height,
+                            devicePixelRatio: window.devicePixelRatio
+                        };
+                    }""")
+                    print(f"🔍 Viewport debug info: {actual_viewport}")
+                except Exception as e:
+                    print(f"Could not get viewport debug info: {e}")
+            
+            try:
+                # Handle WebSocket URLs differently
+                if self.url.startswith('wss://') or self.url.startswith('ws://'):
+                    # For WebSocket URLs, we need to connect to the HTTP(S) version
+                    # and let the page establish the WebSocket connection
+                    http_url = self.url.replace('wss://', 'https://').replace('ws://', 'http://')
+                    page.goto(http_url, wait_until='networkidle')
+                else:
+                    page.goto(self.url, wait_until='networkidle')
+                
+                print(f"Connected to {self.url}")
+                print(f"Recording with viewport size: {self.viewport_size}")
+                
+                # Wait for page to fully load
+                page.wait_for_load_state('networkidle')
+                
+                # For Browserless, get final viewport info after page load
+                if self.use_browserless:
+                    try:
+                        # Set viewport one more time after page load
+                        page.set_viewport_size({'width': self.viewport_size[0], 'height': self.viewport_size[1]})
+                        
+                        final_viewport = page.evaluate("""() => {
+                            return {
+                                innerWidth: window.innerWidth,
+                                innerHeight: window.innerHeight,
+                                outerWidth: window.outerWidth,
+                                outerHeight: window.outerHeight,
+                                devicePixelRatio: window.devicePixelRatio,
+                                documentWidth: document.documentElement.clientWidth,
+                                documentHeight: document.documentElement.clientHeight
+                            };
+                        }""")
+                        print(f"🔍 Final viewport after page load: {final_viewport}")
+                        
+                        # Check if there's a dimension mismatch
+                        expected_width, expected_height = self.viewport_size
+                        actual_width = final_viewport.get('innerWidth', 0)
+                        actual_height = final_viewport.get('innerHeight', 0)
+                        outer_width = final_viewport.get('outerWidth', 0)
+                        outer_height = final_viewport.get('outerHeight', 0)
+                        
+                        # Calculate browser chrome size
+                        chrome_width = outer_width - actual_width
+                        chrome_height = outer_height - actual_height
+                        print(f"🔍 Browser chrome size: {chrome_width}x{chrome_height}")
+                        
+                        if actual_width != expected_width or actual_height != expected_height:
+                            print(f"⚠️  MISMATCH: Expected {expected_width}x{expected_height}, got {actual_width}x{actual_height}")
+                            
+                            # Calculate new window size to compensate for chrome
+                            new_window_width = expected_width + chrome_width
+                            new_window_height = expected_height + chrome_height
+                            
+                            print(f"🔧 Resizing browser window to {new_window_width}x{new_window_height} to compensate for chrome")
+                            
+                            # Resize browser window to compensate for chrome
+                            try:
+                                cdp_session = context.new_cdp_session(page)
+                                windows_result = cdp_session.send('Browser.getWindowForTarget')
+                                window_id = windows_result.get('windowId', 1)
+                                
+                                cdp_session.send('Browser.setWindowBounds', {
+                                    'windowId': window_id,
+                                    'bounds': {
+                                        'left': 0,
+                                        'top': 0,
+                                        'width': new_window_width,
+                                        'height': new_window_height,
+                                        'windowState': 'normal'
+                                    }
+                                })
+                                
+                                # Wait a moment for resize
+                                page.wait_for_timeout(1000)
+                                
+                                # Set viewport again after window resize
+                                page.set_viewport_size({'width': expected_width, 'height': expected_height})
+                                
+                                # Verify the fix
+                                verify_viewport = page.evaluate("""() => {
+                                    return {
+                                        innerWidth: window.innerWidth,
+                                        innerHeight: window.innerHeight
+                                    };
+                                }""")
+                                print(f"✅ After chrome compensation: {verify_viewport}")
+                                
+                            except Exception as resize_error:
+                                print(f"Chrome compensation failed: {resize_error}")
+                            
+                    except Exception as e:
+                        print(f"Final viewport check error: {e}")
+                
+                if scroll:
+                    print("Starting smooth scroll...")
+                    self.smooth_scroll_to_bottom(page)
+                else:
+                    # Just wait for the specified timeout if not scrolling
+                    print(f"Recording for {self.timeout_seconds} seconds...")
+                    page.wait_for_timeout(self.timeout_seconds * 1000)
+                
+                print("Recording complete!")
+                
+            finally:
+                # Close the page and context to save the video
+                page.close()
+                video_path = page.video.path()
+                context.close()
+                browser.close()
+                
+                # Move video to desired location
+                if video_path:
+                    Path(video_path).rename(self.output_path)
+                    print(f"Video saved to: {self.output_path}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Record webpage with Playwright')
+    parser.add_argument('url', help='URL to record (http, https, or wss)')
+    parser.add_argument('--width', type=int, default=1920, help='Viewport width')
+    parser.add_argument('--height', type=int, default=1080, help='Viewport height')
+    parser.add_argument('--output', default='recording.webm', help='Output video file')
+    parser.add_argument('--scroll', action='store_true', help='Enable smooth scrolling')
+    parser.add_argument('--scroll-speed', type=int, default=100, help='Scroll speed in pixels')
+    parser.add_argument('--timeout', type=int, default=30, help='Timeout in seconds')
+    
+    # Browserless options
+    parser.add_argument('--browserless', action='store_true', help='Use Browserless instead of local browser')
+    parser.add_argument('--browserless-host', default='localhost', help='Browserless host (default: localhost)')
+    parser.add_argument('--browserless-port', type=int, default=3000, help='Browserless port (default: 3000)')
+    parser.add_argument('--block-ads', action='store_true', help='Block ads using uBlock-Lite (Browserless only)')
+    parser.add_argument('--browserless-token', help='Authorization token for Browserless')
+    parser.add_argument('--tracking-id', help='Custom session identifier for Browserless')
+    parser.add_argument('--browserless-timeout', type=int, help='Override system-level timeout for Browserless (milliseconds)')
+    
+    args = parser.parse_args()
+    
+    # Create videos directory if it doesn't exist
+    Path("videos").mkdir(exist_ok=True)
+    
+    # Build browserless options
+    browserless_options = {}
+    if args.block_ads:
+        browserless_options['blockAds'] = True
+    if args.browserless_token:
+        browserless_options['token'] = args.browserless_token
+    if args.tracking_id:
+        browserless_options['trackingId'] = args.tracking_id
+    if args.browserless_timeout:
+        browserless_options['timeout'] = args.browserless_timeout
+    
+    recorder = WebPageRecorder(
+        url=args.url,
+        viewport_size=(args.width, args.height),
+        output_path=args.output,
+        scroll_speed=args.scroll_speed,
+        timeout_seconds=args.timeout,
+        browserless_host=args.browserless_host,
+        browserless_port=args.browserless_port,
+        use_browserless=args.browserless,
+        browserless_options=browserless_options if browserless_options else None
+    )
+    
+    recorder.record_with_scroll(scroll=args.scroll)
+
+if __name__ == "__main__":
+    main()
+
+
