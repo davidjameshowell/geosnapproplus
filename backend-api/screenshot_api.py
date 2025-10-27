@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Optional, Literal, Dict
 import asyncio
 from playwright.async_api import async_playwright, Page
+from camoufox.async_api import AsyncCamoufox
 import base64
 import logging
 from datetime import datetime
@@ -13,11 +14,50 @@ from pathlib import Path
 import time
 from pyvirtualdisplay import Display
 import uuid
+import re
 import json
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# Ensure our logs surface under Uvicorn/Hypercorn by reusing their error logger handlers
+try:
+    candidate_error_loggers = [
+        logging.getLogger("uvicorn.error"),
+        logging.getLogger("hypercorn.error"),
+    ]
+    selected = next((lg for lg in candidate_error_loggers if lg and lg.handlers), None)
+    if selected is not None:
+        logger.handlers = selected.handlers
+        logger.setLevel(selected.level or logging.INFO)
+        logger.propagate = False
+    else:
+        import sys
+        _handler = logging.StreamHandler(sys.stdout)
+        _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(_handler)
+        logger.setLevel(logging.INFO)
+except Exception:
+    pass
+
+# Bridge helpers to also emit via access loggers so messages are visible alongside access logs
+_access_loggers = [logging.getLogger("uvicorn.access"), logging.getLogger("hypercorn.access")]
+
+def log_info(message: str) -> None:
+    try:
+        for _lg in _access_loggers:
+            _lg.info(message)
+    except Exception:
+        pass
+    logger.info(message)
+
+def log_warning(message: str) -> None:
+    try:
+        for _lg in _access_loggers:
+            _lg.warning(message)
+    except Exception:
+        pass
+    logger.warning(message)
 
 # Default settings for API parameters
 DEFAULT_SETTINGS = {
@@ -27,13 +67,16 @@ DEFAULT_SETTINGS = {
     "image_type": "png",
     "quality": None,
     "wait_until": "domcontentloaded",
-    "wait_timeout": 30000,
+    "wait_timeout": 60000,
     "browser_type": "chromium",
     "record_duration": 10,
     "scroll_enabled": False,
     "scroll_speed": 100,
     "scroll_up_after": False,
-    "headless": True
+    "scroll_timeout": 10,
+    "headless": True,
+    "post_wait_ms": 1500,
+    "pre_record_wait_ms": 1000
 }
 
 # --- FastAPI App Initialization ---
@@ -61,6 +104,11 @@ class ScreenshotRequest(BaseModel):
     clip_width: Optional[int] = Field(None, description="Width of clipping area")
     clip_height: Optional[int] = Field(None, description="Height of clipping area")
     user_agent: Optional[str] = Field(None, description="Custom user agent string")
+    camoufox_fallback: bool = Field(
+        True,
+        description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
+    )
+    post_wait_ms: int = Field(DEFAULT_SETTINGS["post_wait_ms"], ge=0, le=120000, description="Extra delay after navigation/selector before capture (milliseconds)")
 
     @validator('quality')
     def validate_quality(cls, v, values):
@@ -93,6 +141,12 @@ class RecordingRequest(BaseModel):
     scroll_enabled: bool = Field(DEFAULT_SETTINGS["scroll_enabled"], description="Enable smooth scrolling during recording")
     scroll_speed: int = Field(DEFAULT_SETTINGS["scroll_speed"], ge=10, le=500, description="Pixels to scroll per iteration")
     scroll_up_after: bool = Field(DEFAULT_SETTINGS["scroll_up_after"], description="Scroll back to the top after reaching the bottom.")
+    scroll_timeout: int = Field(DEFAULT_SETTINGS["scroll_timeout"], ge=1, le=120, description="Maximum time to spend auto-scrolling in seconds")
+    camoufox_fallback: bool = Field(
+        True,
+        description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
+    )
+    pre_record_wait_ms: int = Field(DEFAULT_SETTINGS["pre_record_wait_ms"], ge=0, le=120000, description="Extra delay after navigation before starting actions (milliseconds)")
 
 # --- Queue & Task Models ---
 
@@ -245,7 +299,7 @@ async def _startup_queue_worker():
         _task_queue = asyncio.Queue()
     if _worker_task is None or _worker_task.done():
         _worker_task = asyncio.create_task(_queue_worker())
-        logger.info("Queue worker started")
+        log_info("Queue worker started")
 
 @app.on_event("shutdown")
 async def _shutdown_queue_worker():
@@ -256,11 +310,11 @@ async def _shutdown_queue_worker():
             await _worker_task
         except Exception:
             pass
-        logger.info("Queue worker stopped")
+        log_info("Queue worker stopped")
 
 # --- Helper Functions ---
 
-async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down"):
+async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down", hard_deadline_ms: Optional[int] = None):
     """Scrolls until the end of the page is reached in the given direction."""
     last_pos = -1
     stable_count = 0
@@ -268,6 +322,12 @@ async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down")
     scroll_by = scroll_speed if direction == "down" else -scroll_speed
 
     while True:
+        # Respect hard deadline if provided
+        if hard_deadline_ms is not None:
+            now_ms = int(time.time() * 1000)
+            if now_ms >= hard_deadline_ms:
+                log_info(f"Scroll hard deadline reached while scrolling {direction}")
+                break
         await page.evaluate(f"window.scrollBy(0, {scroll_by})")
         await page.wait_for_timeout(100)
         
@@ -276,30 +336,34 @@ async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down")
         if current_pos == last_pos:
             stable_count += 1
             if stable_count >= max_stable_count:
-                logger.info(f"Reached {direction} end of page.")
+                log_info(f"Reached {direction} end of page.")
                 break
         else:
             stable_count = 0
             last_pos = current_pos
         
         if direction == "up" and current_pos == 0:
-            logger.info("Reached top of page.")
+            log_info("Reached top of page.")
             break
 
 async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
     """Manages the sequence of scrolling actions (down, pause, up)."""
-    await _scroll_to_end(page, request.scroll_speed, direction="down")
+    # Establish a hard deadline for total scroll time to avoid infinite scrolling pages
+    start_ms = int(time.time() * 1000)
+    deadline_ms = start_ms + (request.scroll_timeout * 1000)
+
+    await _scroll_to_end(page, request.scroll_speed, direction="down", hard_deadline_ms=deadline_ms)
     
     if request.scroll_up_after:
-        logger.info("Pausing at bottom before scrolling up...")
+        log_info("Pausing at bottom before scrolling up...")
         await page.wait_for_timeout(1000)
-        await _scroll_to_end(page, request.scroll_speed, direction="up")
+        await _scroll_to_end(page, request.scroll_speed, direction="up", hard_deadline_ms=deadline_ms)
 
 async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a video in a new browser instance."""
     display = None
     if not request_model.headless:
-        logger.info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
+        log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
         display = Display(visible=0, size=(request_model.viewport_width, request_model.viewport_height))
         display.start()
         
@@ -323,8 +387,33 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                 video_path = None
                 try:
                     await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                    if await _page_contains_turnstile(page):
+                        snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
+                        log_info(f"Turnstile indicators present (recording). Body snippet: {snippet[:300].replace('\n',' ')}...")
+                    # Optional Stealth Browser fallback
+                    if await _page_contains_turnstile(page):
+                        log_info(
+                            f"Turnstile detected for recording {request_model.url}; retrying with Stealth Browser"
+                            if request_model.camoufox_fallback else
+                            f"Turnstile detected for recording {request_model.url}; fallback disabled"
+                        )
+                        await context.close()
+                        await browser.close()
+                        if request_model.camoufox_fallback:
+                            async with _launch_maybe_camoufox(request_model.headless) as cf_browser:
+                                cf_context = await cf_browser.new_context(viewport={'width': request_model.viewport_width, 'height': request_model.viewport_height},
+                                                                         record_video_dir=temp_dir,
+                                                                         record_video_size={'width': request_model.viewport_width, 'height': request_model.viewport_height})
+                                page = await cf_context.new_page()
+                                await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                                log_info(f"Stealth Browser navigation successful for recording {request_model.url}")
                     
-                    # The record_duration is now a timeout for the actions that happen *after* page load.
+                    # Optional pre-record wait for background resources
+                    if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
+                        await page.wait_for_timeout(request_model.pre_record_wait_ms)
+
+                    # Time-box post-load actions. We cap scrolling time via scroll_timeout
+                    # and ensure the overall post-load actions respect record_duration.
                     try:
                         if request_model.scroll_enabled:
                             scroll_task = asyncio.create_task(
@@ -334,14 +423,21 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                         else:
                             await asyncio.sleep(request_model.record_duration)
                     except asyncio.TimeoutError:
-                        logger.info(f"Recording duration of {request_model.record_duration}s reached. Stopping actions.")
+                        log_info(f"Recording duration of {request_model.record_duration}s reached. Stopping actions.")
                         # The task will be cancelled automatically by wait_for
                     
                 finally:
-                    if page.video:
-                        video_path = await page.video.path()
-                    await context.close()
-                    await browser.close()
+                    try:
+                        if page.video:
+                            video_path = await page.video.path()
+                    except Exception:
+                        pass
+                    for obj in (context, browser):
+                        try:
+                            await obj.close()
+                        except Exception:
+                            pass
+                    # cf_browser/context are closed by context manager
             
             if video_path and Path(video_path).exists():
                 video_buffer = Path(video_path).read_bytes()
@@ -350,19 +446,20 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                 raise FileNotFoundError("Video file was not created.")
     finally:
         if display:
-            logger.info("Stopping virtual display.")
+            log_info("Stopping virtual display.")
             display.stop()
 
 async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotRequest) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a screenshot in a new browser instance."""
     display = None
     if not request_model.headless:
-        logger.info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
+        log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
         display = Display(visible=0, size=(request_model.viewport_width, request_model.viewport_height))
         display.start()
         
     try:
         async with async_playwright() as p:
+            # Primary attempt using requested engine
             browser_launcher = getattr(p, request_model.browser_type)
             browser = await browser_launcher.launch(headless=request_model.headless)
             
@@ -377,9 +474,60 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
             
             try:
                 await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                # Log body snippet for debugging when indicators are present
+                if await _page_contains_turnstile(page):
+                    snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
+                    log_info(f"Turnstile indicators present. Body snippet: {snippet[:300].replace('\n',' ') }...")
+
+                # If Cloudflare/Turnstile is detected and fallback enabled, retry with Stealth Browser
+                if await _page_contains_turnstile(page):
+                    if not request_model.camoufox_fallback:
+                        log_warning(f"Turnstile detected for {request_model.url} but stealth fallback is disabled; proceeding without fallback")
+                    else:
+                        log_info(f"Turnstile detected for {request_model.url}; retrying with Stealth Browser")
+                    await context.close()
+                    await browser.close()
+                    if request_model.camoufox_fallback:
+                        async with _launch_maybe_camoufox(request_model.headless) as cf_browser:
+                            cf_context_opts = {
+                                'viewport': {'width': request_model.viewport_width, 'height': request_model.viewport_height}
+                            }
+                            if CAMOUFOX_DEFAULT_UA and not request_model.user_agent:
+                                cf_context_opts['user_agent'] = CAMOUFOX_DEFAULT_UA
+                            elif request_model.user_agent:
+                                cf_context_opts['user_agent'] = request_model.user_agent
+                            cf_context = await cf_browser.new_context(**cf_context_opts)
+                            page = await cf_context.new_page()
+                            await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                            if await _page_contains_turnstile(page):
+                                log_info("Turnstile still present after Stealth Browser retry")
+                            else:
+                                log_info(f"Stealth Browser navigation successful for {request_model.url}")
+
+                            # If requested, wait for selector before capture
+                            if request_model.wait_for_selector:
+                                await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+
+                            # Capture screenshot inside Stealth Browser context and return immediately
+                            screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
+                            if request_model.image_type == 'jpeg':
+                                screenshot_options['quality'] = request_model.quality
+                            if all([request_model.clip_x is not None, request_model.clip_y is not None, request_model.clip_width is not None, request_model.clip_height is not None]):
+                                screenshot_options['clip'] = {'x': request_model.clip_x, 'y': request_model.clip_y, 'width': request_model.clip_width, 'height': request_model.clip_height}
+
+                            screenshot_buffer = await page.screenshot(**screenshot_options)
+                            try:
+                                await cf_context.close()
+                            except Exception:
+                                pass
+                            content_type = f"image/{request_model.image_type}"
+                            return screenshot_buffer, content_type
                 
                 if request_model.wait_for_selector:
                     await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                # Optional post-wait for background resources
+                if hasattr(request_model, 'post_wait_ms') and request_model.post_wait_ms:
+                    await page.wait_for_timeout(request_model.post_wait_ms)
                 
                 screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
                 if request_model.image_type == 'jpeg':
@@ -390,14 +538,21 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                 
                 screenshot_buffer = await page.screenshot(**screenshot_options)
             finally:
-                await context.close()
-                await browser.close()
+                # Try closing any open contexts/browsers best-effort
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
                 
         content_type = f"image/{request_model.image_type}"
         return screenshot_buffer, content_type
     finally:
         if display:
-            logger.info("Stopping virtual display.")
+            log_info("Stopping virtual display.")
             display.stop()
 
 # --- Generic Request Handler ---
@@ -407,7 +562,7 @@ async def handle_request(handler_func, request_model):
     log_message_fail = f"{'Recording' if 'record' in handler_func.__name__ else 'Screenshot'} failed for URL"
     
     try:
-        logger.info(f"{log_message_start}: {request_model.url}")
+        log_info(f"{log_message_start}: {request_model.url}")
         return await handler_func(request_model)
     except Exception as e:
         logger.exception(f"{log_message_fail} {request_model.url}")
@@ -520,6 +675,70 @@ async def health_check():
     return {"status": "healthy", "service": "Playwright API", "timestamp": datetime.utcnow().isoformat()}
 
 app.include_router(api_router)
+
+# --- Camoufox detection/launch helpers ---
+CAMOUFOX_EXECUTABLE = os.getenv("CAMOUFOX_EXECUTABLE")  # e.g. /usr/bin/camoufox or a firefox-like binary
+CAMOUFOX_DEFAULT_UA = os.getenv("CAMOUFOX_UA")
+
+TURNSTILE_PATTERNS = (
+    re.compile(r"cloudflare", re.I),
+    re.compile(r"turnstile", re.I),
+    re.compile(r"cdn-cgi/challenge-platform", re.I),
+    re.compile(r"checking your browser", re.I),
+    re.compile(r"Verifying you are human", re.I),
+)
+
+async def _page_contains_turnstile(page: Page) -> bool:
+    try:
+        # quick text signals
+        body_text = await page.evaluate("document.body ? document.body.innerText : ''")
+        if any(p.search(body_text or '') for p in TURNSTILE_PATTERNS):
+            try:
+                log_info(f"Turnstile/Cloudflare indicators found in body on: {page.url}")
+            except Exception:
+                log_info("Turnstile/Cloudflare indicators found in body")
+            return True
+        # script/link src signals
+        script_srcs = await page.evaluate("Array.from(document.scripts).map(s=>s.src||'')")
+        if any("challenges.cloudflare.com" in (src or '') for src in script_srcs):
+            log_info("Turnstile script detected on page")
+            return True
+        # raw HTML signals (fallback)
+        html = await page.content()
+        if html and ("challenges.cloudflare.com" in html or "cf-chl" in html or "data-sitekey" in html and "turnstile" in html.lower()):
+            log_info("Turnstile indicators found in HTML content")
+            return True
+        # dom locator signals (best-effort)
+        try:
+            iframe_count = await page.locator('iframe[src*="challenges.cloudflare.com"]').count()
+            if iframe_count and iframe_count > 0:
+                log_info("Turnstile iframe detected via locator")
+                return True
+        except Exception:
+            pass
+        try:
+            ts_count = await page.locator('[id*="turnstile"], [class*="turnstile"]').count()
+            if ts_count and ts_count > 0:
+                log_info("Turnstile element detected via locator")
+                return True
+        except Exception:
+            pass
+        # title heuristic
+        try:
+            title = await page.title()
+            if title and ("Just a moment" in title or "Verifying you are human" in title):
+                log_info(f"Turnstile title heuristic matched: {title}")
+                return True
+        except Exception:
+            pass
+    except Exception:
+        return False
+    return False
+
+def _launch_maybe_camoufox(request_headless: bool) -> AsyncCamoufox:
+    # Use AsyncCamoufox per official docs; executable is managed by the package
+    # headless can be True or "virtual" on linux
+    return AsyncCamoufox(headless=request_headless)
 
 # --- WebSocket subscription endpoint ---
 @app.websocket("/ws/tasks/{task_id}")

@@ -1,248 +1,673 @@
 {% extends "base.html" %}
 
-{% block title %}New Task{% endblock %}
+{% block title %}Create New Task{% endblock %}
 
 {% block content %}
-<h1 class="text-3xl font-bold text-gray-900 mb-6">Create New Task</h1>
+<div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold text-gray-900 mb-2">Create New Task</h1>
+    <p class="text-gray-600 mb-8">Capture screenshots or record videos of any webpage</p>
 
-<form id="taskForm" class="bg-white rounded-lg shadow-lg p-6">
-    <div class="mb-6">
-        <label class="block text-sm font-medium text-gray-700 mb-2">Task Types *</label>
-        <div class="flex space-x-4">
-            <label class="flex items-center">
-                <input type="checkbox" name="task_types" value="screenshot" class="mr-2">
-                Screenshot
-            </label>
-            <label class="flex items-center">
-                <input type="checkbox" name="task_types" value="recording" class="mr-2">
-                Recording
-            </label>
-        </div>
-    </div>
-
-    <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">URL *</label>
-        <input type="url" name="url" required placeholder="https://example.com" 
-               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-    </div>
-
-    {% if flags.browser_type %}
-    <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Browser Type</label>
-        <select name="browser_type" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-            <option value="">Default (chromium)</option>
-            <option value="chromium">Chromium</option>
-            <option value="firefox">Firefox</option>
-            <option value="webkit">WebKit</option>
-        </select>
-    </div>
-    {% endif %}
-
-    {% if flags.headless %}
-    <div class="mb-4">
-        <label class="flex items-center">
-            <input type="checkbox" name="headless" value="true" checked class="mr-2">
-            <span class="text-sm font-medium text-gray-700">Headless Mode</span>
-        </label>
-    </div>
-    {% endif %}
-
-    <div class="grid grid-cols-2 gap-4 mb-4">
-        {% if flags.viewport_width %}
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Viewport Width</label>
-            <input type="number" name="viewport_width" placeholder="1920" min="320" max="3840"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-        
-        {% if flags.viewport_height %}
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Viewport Height</label>
-            <input type="number" name="viewport_height" placeholder="1080" min="240" max="2160"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-    </div>
-
-    {% if flags.wait_until %}
-    <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Wait Until</label>
-        <select name="wait_until" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-            <option value="">Default (networkidle)</option>
-            <option value="load">Load</option>
-            <option value="domcontentloaded">DOM Content Loaded</option>
-            <option value="networkidle">Network Idle</option>
-        </select>
-    </div>
-    {% endif %}
-
-    {% if flags.wait_timeout %}
-    <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Wait Timeout (ms)</label>
-        <input type="number" name="wait_timeout" placeholder="30000" min="1000" max="120000"
-               class="w-full px-3 py-2 border border-gray-300 rounded-md">
-    </div>
-    {% endif %}
-
-    {% if flags.user_agent %}
-    <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">User Agent</label>
-        <input type="text" name="user_agent" placeholder="Custom user agent (optional)"
-               class="w-full px-3 py-2 border border-gray-300 rounded-md">
-    </div>
-    {% endif %}
-
-    <div id="screenshotOptions" class="border-t pt-4 mt-4" style="display:none;">
-        <h3 class="text-lg font-semibold mb-3">Screenshot Options</h3>
-        
-        {% if flags.full_page %}
-        <div class="mb-4">
-            <label class="flex items-center">
-                <input type="checkbox" name="full_page" value="true" id="fullPageCheckbox" class="mr-2">
-                <span class="text-sm font-medium text-gray-700">Full Page Screenshot</span>
-            </label>
-        </div>
-        {% endif %}
-
-        {% if flags.image_type %}
-        <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Image Type</label>
-            <select name="image_type" id="imageType" class="w-full px-3 py-2 border border-gray-300 rounded-md">
-                <option value="">Default (png)</option>
-                <option value="png">PNG</option>
-                <option value="jpeg">JPEG</option>
-            </select>
-        </div>
-        {% endif %}
-
-        {% if flags.quality %}
-        <div class="mb-4" id="qualityField" style="display:none;">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Quality (JPEG only)</label>
-            <input type="number" name="quality" placeholder="80" min="0" max="100"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-
-        {% if flags.wait_for_selector %}
-        <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Wait for Selector</label>
-            <input type="text" name="wait_for_selector" placeholder=".main-content"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-
-        {% if flags.clip_fields %}
-        <div id="clipFields">
-            <h4 class="text-sm font-semibold mb-2">Clip Region (all required)</h4>
-            <div class="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                    <label class="block text-sm text-gray-700 mb-1">Clip X</label>
-                    <input type="number" name="clip_x" placeholder="0" min="0"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md clip-input">
+    <form id="taskForm" class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <!-- Progress Steps -->
+        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b">
+            <div class="flex items-center justify-between max-w-md">
+                <div class="flex items-center space-x-2">
+                    <span id="step1" class="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-semibold shadow-md">1</span>
+                    <span class="font-medium text-gray-900">Task Type</span>
                 </div>
-                <div>
-                    <label class="block text-sm text-gray-700 mb-1">Clip Y</label>
-                    <input type="number" name="clip_y" placeholder="0" min="0"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md clip-input">
-                </div>
-                <div>
-                    <label class="block text-sm text-gray-700 mb-1">Clip Width</label>
-                    <input type="number" name="clip_width" placeholder="800" min="1"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md clip-input">
-                </div>
-                <div>
-                    <label class="block text-sm text-gray-700 mb-1">Clip Height</label>
-                    <input type="number" name="clip_height" placeholder="600" min="1"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md clip-input">
+                <div class="flex-1 h-0.5 bg-gray-300 mx-4"></div>
+                <div class="flex items-center space-x-2">
+                    <span id="step2" class="border-2 border-gray-300 bg-white rounded-full w-8 h-8 flex items-center justify-center text-sm text-gray-400">2</span>
+                    <span class="text-gray-400 font-medium">Configure</span>
                 </div>
             </div>
         </div>
-        {% endif %}
+
+        <div class="p-6">
+            <!-- Step 1: Task Type Selection -->
+            <div id="taskTypeSection">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">What would you like to create?</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <!-- Screenshot Card -->
+                    <label class="cursor-pointer group">
+                        <input type="checkbox" name="task_types" value="screenshot" class="peer hidden task-type-checkbox">
+                        <div class="border-2 border-gray-300 peer-checked:border-blue-600 peer-checked:bg-blue-50 rounded-xl p-6 transition-all hover:shadow-lg hover:border-blue-400">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="text-4xl">📸</div>
+                                <div class="opacity-0 peer-checked:opacity-100 transition-opacity">
+                                    <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <h3 class="font-semibold text-lg mb-2 text-gray-900">Screenshot</h3>
+                            <p class="text-sm text-gray-600">Capture a static image of a webpage at any viewport size</p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">PNG</span>
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">JPEG</span>
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">Full Page</span>
+                            </div>
+                        </div>
+                    </label>
+
+                    <!-- Recording Card -->
+                    <label class="cursor-pointer group">
+                        <input type="checkbox" name="task_types" value="recording" class="peer hidden task-type-checkbox">
+                        <div class="border-2 border-gray-300 peer-checked:border-blue-600 peer-checked:bg-blue-50 rounded-xl p-6 transition-all hover:shadow-lg hover:border-blue-400">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="text-4xl">🎥</div>
+                                <div class="opacity-0 peer-checked:opacity-100 transition-opacity">
+                                    <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <h3 class="font-semibold text-lg mb-2 text-gray-900">Recording</h3>
+                            <p class="text-sm text-gray-600">Record video of page interactions with optional auto-scroll</p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">Video</span>
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">Auto-scroll</span>
+                                <span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">Timed</span>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                <div id="taskTypeError" class="hidden bg-red-50 border-l-4 border-red-500 p-4 mb-4 rounded">
+                    <div class="flex items-center">
+                        <span class="text-red-500 text-xl mr-2">⚠️</span>
+                        <p class="text-sm text-red-700">Please select at least one task type</p>
+                    </div>
+                </div>
+
+                <button type="button" id="continueBtn" class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium shadow-md disabled:bg-gray-300 disabled:cursor-not-allowed">
+                    Continue to Configuration →
+                </button>
+            </div>
+
+            <!-- Step 2: Configuration -->
+            <div id="configSection" class="hidden">
+                <!-- URL Field -->
+                <div class="mb-6">
+                    <label class="block text-sm font-semibold text-gray-900 mb-2">
+                        Website URL <span class="text-red-500">*</span>
+                    </label>
+                    <input type="url" name="url" required 
+                           placeholder="https://example.com"
+                           class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-base">
+                    <div class="mt-2 flex items-start space-x-2">
+                        <span class="text-blue-500 text-sm mt-0.5">💡</span>
+                        <p class="text-xs text-gray-600">Tip: Pages with infinite scrolling work best with "DOM Content Loaded" wait option</p>
+                    </div>
+                </div>
+
+                <!-- Quick Setup Presets -->
+                <div class="mb-6">
+                    <label class="block text-sm font-semibold text-gray-900 mb-3">Quick Setup</label>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <button type="button" class="preset-btn text-left px-4 py-3 border-2 border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition" data-preset="default">
+                            <div class="font-medium text-sm">💻 Desktop</div>
+                            <div class="text-xs text-gray-500 mt-1">1920×1080</div>
+                        </button>
+                        <button type="button" class="preset-btn text-left px-4 py-3 border-2 border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition" data-preset="mobile_iphone14">
+                            <div class="font-medium text-sm">📱 Mobile</div>
+                            <div class="text-xs text-gray-500 mt-1">iPhone 14</div>
+                        </button>
+                        <button type="button" class="preset-btn text-left px-4 py-3 border-2 border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition" data-preset="desktop_full">
+                            <div class="font-medium text-sm">📄 Full Page</div>
+                            <div class="text-xs text-gray-500 mt-1">Complete</div>
+                        </button>
+                        <button type="button" class="preset-btn text-left px-4 py-3 border-2 border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition" data-preset="custom">
+                            <div class="font-medium text-sm">⚙️ Custom</div>
+                            <div class="text-xs text-gray-500 mt-1">Advanced</div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stealth Mode -->
+                <div class="mb-6 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <label class="flex items-start cursor-pointer">
+                        <input type="checkbox" name="camoufox_fallback" value="true" class="mt-1 mr-3 w-4 h-4 text-blue-600 rounded" id="stealthCheckbox">
+                        <div class="flex-1">
+                            <span class="text-sm font-semibold text-gray-900">🥷 Enable Stealth Mode</span>
+                            <p class="text-xs text-gray-600 mt-1">
+                                Proactively uses advanced browser fingerprinting techniques to bypass bot detection systems like Cloudflare Turnstile. Requires Firefox browser engine.
+                            </p>
+                            <div class="mt-2 flex items-start space-x-2 bg-purple-100 rounded px-2 py-1.5">
+                                <span class="text-purple-600 text-xs mt-0.5">ℹ️</span>
+                                <p class="text-xs text-purple-700">
+                                    <strong>Note:</strong> If captchas or bot protections are detected during normal operation, the system will automatically retry using stealth mode regardless of this setting.
+                                </p>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- Screenshot-specific Options -->
+                <div id="screenshotOptions" class="hidden mb-6">
+                    <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                        <h4 class="font-semibold text-gray-900 mb-3 flex items-center">
+                            <span class="text-xl mr-2">📸</span>
+                            Screenshot Settings
+                        </h4>
+                        
+                        {% if flags.full_page %}
+                        <div class="mb-4">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" name="full_page" value="true" id="fullPageCheckbox" class="mr-3 w-4 h-4 text-blue-600 rounded">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900">Capture full page (scrolls automatically)</span>
+                                    <p class="text-xs text-gray-600 mt-0.5">Captures the entire webpage by automatically scrolling and stitching screenshots together</p>
+                                </div>
+                            </label>
+                        </div>
+                        {% endif %}
+
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            {% if flags.image_type %}
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Image Format</label>
+                                <select name="image_type" id="imageType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                    <option value="">Default (PNG)</option>
+                                    <option value="png">PNG - Lossless</option>
+                                    <option value="jpeg">JPEG - Smaller size</option>
+                                </select>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.quality %}
+                            <div id="qualityField" class="hidden">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Quality</label>
+                                <input type="number" name="quality" placeholder="80" min="0" max="100"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">0-100 (JPEG only, higher = better quality)</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if flags.wait_for_selector %}
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Wait for Element (optional)</label>
+                            <input type="text" name="wait_for_selector" placeholder=".main-content"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                            <p class="text-xs text-gray-500 mt-1">CSS selector to wait for before capturing (e.g., ".content-loaded" or "#main-image")</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Recording-specific Options -->
+                <div id="recordingOptions" class="hidden mb-6">
+                    <div class="bg-green-50 rounded-lg p-4 border border-green-200">
+                        <h4 class="font-semibold text-gray-900 mb-3 flex items-center">
+                            <span class="text-xl mr-2">🎥</span>
+                            Recording Settings
+                        </h4>
+                        
+                        {% if flags.record_duration %}
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Duration (seconds)</label>
+                            <input type="number" name="record_duration" placeholder="10" min="1" max="120"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                            <p class="text-xs text-gray-500 mt-1">Maximum recording length (1-120 seconds)</p>
+                        </div>
+                        {% endif %}
+
+                        {% if flags.scroll_enabled %}
+                        <div class="mb-4">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" name="scroll_enabled" value="true" id="scrollEnabled" class="mr-3 w-4 h-4 text-blue-600 rounded">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900">Enable auto-scrolling during recording</span>
+                                    <p class="text-xs text-gray-600 mt-0.5">Automatically scrolls down the page smoothly while recording</p>
+                                </div>
+                            </label>
+                        </div>
+                        {% endif %}
+
+                        <div id="scrollOptions" class="hidden ml-6 space-y-3">
+                            {% if flags.scroll_speed %}
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Scroll Speed (pixels per step)</label>
+                                <input type="number" name="scroll_speed" placeholder="100" min="10" max="500"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Higher values = faster scrolling (10-500px per step)</p>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.scroll_timeout %}
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Scroll Timeout (seconds)</label>
+                                <input type="number" name="scroll_timeout" placeholder="10" min="1" max="120"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Max time to spend auto-scrolling to avoid infinite pages</p>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.scroll_up_after %}
+                            <div>
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" name="scroll_up_after" value="true" class="mr-3 w-4 h-4 text-blue-600 rounded">
+                                    <div>
+                                        <span class="text-sm font-medium text-gray-900">Scroll back to top when finished</span>
+                                        <p class="text-xs text-gray-600 mt-0.5">Returns to the top of the page after reaching the bottom</p>
+                                    </div>
+                                </label>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Options (Collapsible) -->
+                <div class="mb-6">
+                    <button type="button" id="toggleAdvanced" class="flex items-center space-x-2 text-blue-600 hover:text-blue-700 font-medium mb-3 transition">
+                        <svg class="w-5 h-5 transform transition-transform" id="advancedIcon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <span>Advanced Options</span>
+                        <span class="text-xs text-gray-500 font-normal">(Optional - smart defaults applied)</span>
+                    </button>
+
+                    <div id="advancedOptionsContent" class="hidden space-y-4">
+                        <!-- Browser Settings -->
+                        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <h4 class="font-medium text-gray-900 mb-3 flex items-center">
+                                <span class="text-lg mr-2">🖥️</span>
+                                Browser & Viewport
+                            </h4>
+                            
+                            <div class="grid grid-cols-2 gap-4 mb-4">
+                                {% if flags.viewport_width %}
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Viewport Width</label>
+                                    <input type="number" name="viewport_width" placeholder="1920" min="320" max="3840"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                    <p class="text-xs text-gray-500 mt-1">Browser window width (320-3840px)</p>
+                                </div>
+                                {% endif %}
+                                
+                                {% if flags.viewport_height %}
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Viewport Height</label>
+                                    <input type="number" name="viewport_height" placeholder="1080" min="240" max="2160"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                    <p class="text-xs text-gray-500 mt-1">Browser window height (240-2160px)</p>
+                                </div>
+                                {% endif %}
+                            </div>
+
+                            {% if flags.browser_type %}
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    Browser Engine
+                                    <span id="browserLockIndicator" class="hidden text-xs text-purple-600 ml-2">🔒 Locked to Firefox for Stealth Mode</span>
+                                </label>
+                                <select name="browser_type" id="browserType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                    <option value="">Default (Chromium)</option>
+                                    <option value="chromium">Chromium - Fast, modern</option>
+                                    <option value="firefox">Firefox - Best for stealth</option>
+                                    <option value="webkit">WebKit - Safari engine</option>
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">Different rendering engines may produce slightly different results</p>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.user_agent %}
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Custom User Agent</label>
+                                <input type="text" name="user_agent" placeholder="Leave empty for default"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Override browser identification string (useful for mobile device simulation)</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Page Load Settings -->
+                        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <h4 class="font-medium text-gray-900 mb-3 flex items-center">
+                                <span class="text-lg mr-2">⏱️</span>
+                                Page Load & Timing
+                            </h4>
+                            
+                            {% if flags.wait_until %}
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Wait Until</label>
+                                <select name="wait_until" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                    <option value="">Default (DOM Content Loaded)</option>
+                                    <option value="load">Load - All resources loaded (images, CSS, JS)</option>
+                                    <option value="domcontentloaded">DOM Content Loaded - HTML parsed, faster</option>
+                                    <option value="networkidle">Network Idle - No network activity for 500ms</option>
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">When to consider the page ready for capture</p>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.wait_timeout %}
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Timeout (milliseconds)</label>
+                                <input type="number" name="wait_timeout" placeholder="30000" min="1000" max="120000"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Maximum time to wait for page load (1000-120000ms, default: 30000)</p>
+                            </div>
+                            {% endif %}
+
+                            {% if flags.headless %}
+                            <div>
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" name="headless" value="true" checked class="mr-3 w-4 h-4 text-blue-600 rounded">
+                                    <div>
+                                        <span class="text-sm font-medium text-gray-900">Headless Mode</span>
+                                        <p class="text-xs text-gray-600 mt-0.5">Run browser without visible window (recommended for performance)</p>
+                                    </div>
+                                </label>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Clip Region (Screenshot only) -->
+                        {% if flags.clip_fields %}
+                        <div id="clipSection" class="bg-gray-50 rounded-lg p-4 border border-gray-200 hidden">
+                            <h4 class="font-medium text-gray-900 mb-3 flex items-center">
+                                <span class="text-lg mr-2">✂️</span>
+                                Clip Region
+                            </h4>
+                            <p class="text-xs text-gray-600 mb-3">Capture only a specific rectangular area (all fields required, incompatible with full page)</p>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-700 mb-1">X Position (pixels)</label>
+                                    <input type="number" name="clip_x" placeholder="0" min="0"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 clip-input">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-700 mb-1">Y Position (pixels)</label>
+                                    <input type="number" name="clip_y" placeholder="0" min="0"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 clip-input">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-700 mb-1">Width (pixels)</label>
+                                    <input type="number" name="clip_width" placeholder="800" min="1"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 clip-input">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-700 mb-1">Height (pixels)</label>
+                                    <input type="number" name="clip_height" placeholder="600" min="1"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 clip-input">
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">💡 Use this to capture specific sections like headers, footers, or content areas</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Navigation Buttons -->
+                <div class="flex space-x-3">
+                    <button type="button" id="backBtn" class="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg hover:bg-gray-300 transition font-medium">
+                        ← Back
+                    </button>
+                    <button type="submit" id="submitBtn" class="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium shadow-md relative">
+                        <span class="submit-text">Create Task</span>
+                        <span class="submit-loading hidden flex items-center justify-center">
+                            <svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Processing...
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Toast Notification -->
+<div id="toast" class="fixed top-4 right-4 max-w-md transform translate-x-full transition-transform duration-300 z-50">
+    <div id="toastContent" class="bg-white rounded-lg shadow-2xl border-l-4 p-4">
+        <div class="flex items-center space-x-3">
+            <span id="toastIcon" class="text-2xl"></span>
+            <div class="flex-1">
+                <h4 id="toastTitle" class="font-semibold"></h4>
+                <p id="toastMessage" class="text-sm text-gray-600"></p>
+            </div>
+            <button id="toastClose" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+            </button>
+        </div>
     </div>
-
-    <div id="recordingOptions" class="border-t pt-4 mt-4" style="display:none;">
-        <h3 class="text-lg font-semibold mb-3">Recording Options</h3>
-        
-        {% if flags.record_duration %}
-        <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Record Duration (seconds)</label>
-            <input type="number" name="record_duration" placeholder="10" min="1" max="120"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-
-        {% if flags.scroll_enabled %}
-        <div class="mb-4">
-            <label class="flex items-center">
-                <input type="checkbox" name="scroll_enabled" value="true" id="scrollEnabled" class="mr-2">
-                <span class="text-sm font-medium text-gray-700">Enable Scrolling</span>
-            </label>
-        </div>
-        {% endif %}
-
-        {% if flags.scroll_speed %}
-        <div class="mb-4" id="scrollSpeedField" style="display:none;">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Scroll Speed (px/step)</label>
-            <input type="number" name="scroll_speed" placeholder="100" min="10" max="500"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md">
-        </div>
-        {% endif %}
-
-        {% if flags.scroll_up_after %}
-        <div class="mb-4" id="scrollUpField" style="display:none;">
-            <label class="flex items-center">
-                <input type="checkbox" name="scroll_up_after" value="true" class="mr-2">
-                <span class="text-sm font-medium text-gray-700">Scroll Back Up After</span>
-            </label>
-        </div>
-        {% endif %}
-    </div>
-
-    <div class="mt-6">
-        <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition">
-            Submit Task
-        </button>
-    </div>
-
-    <div id="errorMessage" class="mt-4 p-3 bg-red-100 text-red-700 rounded-md hidden"></div>
-    <div id="successMessage" class="mt-4 p-3 bg-green-100 text-green-700 rounded-md hidden"></div>
-</form>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    // DOM Elements
     const form = document.getElementById('taskForm');
-    const taskTypeCheckboxes = document.querySelectorAll('input[name="task_types"]');
+    const taskTypeCheckboxes = document.querySelectorAll('.task-type-checkbox');
+    const taskTypeSection = document.getElementById('taskTypeSection');
+    const configSection = document.getElementById('configSection');
+    const continueBtn = document.getElementById('continueBtn');
+    const backBtn = document.getElementById('backBtn');
+    const submitBtn = document.getElementById('submitBtn');
+    const taskTypeError = document.getElementById('taskTypeError');
+    const step1 = document.getElementById('step1');
+    const step2 = document.getElementById('step2');
+    
     const screenshotOptions = document.getElementById('screenshotOptions');
     const recordingOptions = document.getElementById('recordingOptions');
+    
     const imageType = document.getElementById('imageType');
     const qualityField = document.getElementById('qualityField');
     const fullPageCheckbox = document.getElementById('fullPageCheckbox');
     const clipInputs = document.querySelectorAll('.clip-input');
+    const clipSection = document.getElementById('clipSection');
     const scrollEnabled = document.getElementById('scrollEnabled');
-    const scrollSpeedField = document.getElementById('scrollSpeedField');
-    const scrollUpField = document.getElementById('scrollUpField');
+    const scrollOptions = document.getElementById('scrollOptions');
+    
+    const toggleAdvanced = document.getElementById('toggleAdvanced');
+    const advancedIcon = document.getElementById('advancedIcon');
+    const advancedOptionsContent = document.getElementById('advancedOptionsContent');
+    
+    // Stealth mode and browser type elements
+    const stealthCheckbox = document.getElementById('stealthCheckbox');
+    const browserType = document.getElementById('browserType');
+    const browserLockIndicator = document.getElementById('browserLockIndicator');
+    
+    const toast = document.getElementById('toast');
+    const toastContent = document.getElementById('toastContent');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastTitle = document.getElementById('toastTitle');
+    const toastMessage = document.getElementById('toastMessage');
+    const toastClose = document.getElementById('toastClose');
 
-    // Toggle options visibility
-    taskTypeCheckboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
-            const screenshotChecked = document.querySelector('input[value="screenshot"]').checked;
-            const recordingChecked = document.querySelector('input[value="recording"]').checked;
-            
-            screenshotOptions.style.display = screenshotChecked ? 'block' : 'none';
-            recordingOptions.style.display = recordingChecked ? 'block' : 'none';
+    // Toast Functions
+    function showToast(type, title, message) {
+        const colors = {
+            success: { border: 'border-green-500', icon: '✓', bg: 'bg-green-50' },
+            error: { border: 'border-red-500', icon: '✗', bg: 'bg-red-50' },
+            warning: { border: 'border-yellow-500', icon: '⚠', bg: 'bg-yellow-50' },
+            info: { border: 'border-blue-500', icon: 'ℹ', bg: 'bg-blue-50' }
+        };
+        
+        const style = colors[type] || colors.error;
+        toastContent.className = `bg-white rounded-lg shadow-2xl border-l-4 ${style.border} p-4`;
+        toastIcon.textContent = style.icon;
+        toastTitle.textContent = title;
+        toastMessage.textContent = message;
+        
+        toast.classList.remove('translate-x-full');
+        
+        setTimeout(() => {
+            toast.classList.add('translate-x-full');
+        }, 5000);
+    }
+    
+    toastClose.addEventListener('click', () => {
+        toast.classList.add('translate-x-full');
+    });
+
+    // Stealth Mode Browser Type Lock
+    function updateBrowserTypeLock() {
+        if (stealthCheckbox && browserType && browserLockIndicator) {
+            if (stealthCheckbox.checked) {
+                // Lock to Firefox for stealth mode
+                browserType.value = 'firefox';
+                browserType.disabled = true;
+                browserType.classList.add('bg-gray-100', 'cursor-not-allowed');
+                browserLockIndicator.classList.remove('hidden');
+            } else {
+                // Unlock browser selection
+                browserType.disabled = false;
+                browserType.classList.remove('bg-gray-100', 'cursor-not-allowed');
+                browserLockIndicator.classList.add('hidden');
+            }
+        }
+    }
+    
+    // Initialize browser lock state
+    if (stealthCheckbox && browserType) {
+        updateBrowserTypeLock();
+        stealthCheckbox.addEventListener('change', updateBrowserTypeLock);
+    }
+
+    // Step Navigation
+    continueBtn.addEventListener('click', () => {
+        const selectedTypes = Array.from(taskTypeCheckboxes).filter(cb => cb.checked);
+        
+        if (selectedTypes.length === 0) {
+            taskTypeError.classList.remove('hidden');
+            return;
+        }
+        
+        taskTypeError.classList.add('hidden');
+        taskTypeSection.classList.add('hidden');
+        configSection.classList.remove('hidden');
+        
+        // Update progress
+        step1.className = 'bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-semibold shadow-md';
+        step1.innerHTML = '✓';
+        step2.className = 'bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-semibold shadow-md';
+        
+        // Show relevant options
+        updateOptionsVisibility();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    backBtn.addEventListener('click', () => {
+        configSection.classList.add('hidden');
+        taskTypeSection.classList.remove('hidden');
+        
+        // Reset progress
+        step1.className = 'bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-semibold shadow-md';
+        step1.textContent = '1';
+        step2.className = 'border-2 border-gray-300 bg-white rounded-full w-8 h-8 flex items-center justify-center text-sm text-gray-400';
+        
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    // Update options visibility based on task type
+    function updateOptionsVisibility() {
+        const screenshotChecked = document.querySelector('input[value="screenshot"]').checked;
+        const recordingChecked = document.querySelector('input[value="recording"]').checked;
+        
+        screenshotOptions.classList.toggle('hidden', !screenshotChecked);
+        recordingOptions.classList.toggle('hidden', !recordingChecked);
+        if (clipSection) clipSection.classList.toggle('hidden', !screenshotChecked);
+    }
+
+    taskTypeCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            taskTypeError.classList.add('hidden');
         });
     });
 
-    // Show quality field only for JPEG
-    if (imageType) {
-        imageType.addEventListener('change', (e) => {
-            qualityField.style.display = e.target.value === 'jpeg' ? 'block' : 'none';
+    // Preset Buttons
+    const presetButtons = document.querySelectorAll('.preset-btn');
+    const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1';
+    
+    function applyPreset(value) {
+        const vw = document.querySelector('input[name="viewport_width"]');
+        const vh = document.querySelector('input[name="viewport_height"]');
+        const ua = document.querySelector('input[name="user_agent"]');
+        const full = fullPageCheckbox;
+        
+        if (!vw || !vh) return;
+        
+        // Reset button states
+        presetButtons.forEach(btn => {
+            btn.classList.remove('border-blue-600', 'bg-blue-50');
+            btn.classList.add('border-gray-300');
+        });
+        
+        // Highlight selected preset
+        const selectedBtn = document.querySelector(`[data-preset="${value}"]`);
+        if (selectedBtn) {
+            selectedBtn.classList.remove('border-gray-300');
+            selectedBtn.classList.add('border-blue-600', 'bg-blue-50');
+        }
+        
+        if (value === 'default') {
+            vw.value = 1920;
+            vh.value = 1080;
+            if (ua) ua.value = '';
+            if (full) full.checked = false;
+            if (imageType) imageType.value = 'png';
+        } else if (value === 'desktop_full') {
+            vw.value = 1920;
+            vh.value = 1080;
+            if (ua) ua.value = '';
+            if (full) full.checked = true;
+            if (imageType) imageType.value = 'png';
+        } else if (value === 'mobile_iphone14') {
+            vw.value = 390;
+            vh.value = 844;
+            if (ua) ua.value = MOBILE_UA;
+            if (full) full.checked = false;
+            if (imageType) imageType.value = 'png';
+        } else if (value === 'custom') {
+            // Just highlight, don't change values
+        }
+        
+        if (fullPageCheckbox) {
+            fullPageCheckbox.dispatchEvent(new Event('change'));
+        }
+        if (qualityField) {
+            qualityField.classList.add('hidden');
+        }
+    }
+    
+    presetButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            applyPreset(btn.dataset.preset);
+        });
+    });
+    
+    // Apply default preset on load
+    applyPreset('default');
+
+    // Advanced Options Toggle
+    if (toggleAdvanced) {
+        toggleAdvanced.addEventListener('click', () => {
+            const isHidden = advancedOptionsContent.classList.contains('hidden');
+            advancedOptionsContent.classList.toggle('hidden');
+            advancedIcon.classList.toggle('rotate-90');
         });
     }
 
-    // Disable clip fields when full page is checked
+    // Image Type & Quality
+    if (imageType) {
+        imageType.addEventListener('change', (e) => {
+            if (qualityField) {
+                qualityField.classList.toggle('hidden', e.target.value !== 'jpeg');
+            }
+        });
+    }
+
+    // Full Page & Clip Fields
     if (fullPageCheckbox) {
         fullPageCheckbox.addEventListener('change', (e) => {
             clipInputs.forEach(input => {
@@ -252,32 +677,33 @@
         });
     }
 
-    // Show scroll speed and scroll up fields when scroll is enabled
+    // Scroll Options
     if (scrollEnabled) {
         scrollEnabled.addEventListener('change', (e) => {
-            scrollSpeedField.style.display = e.target.checked ? 'block' : 'none';
-            scrollUpField.style.display = e.target.checked ? 'block' : 'none';
+            if (scrollOptions) {
+                scrollOptions.classList.toggle('hidden', !e.target.checked);
+            }
         });
     }
 
-    // Form validation and submission
+    // Form Submission
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         
-        const errorMsg = document.getElementById('errorMessage');
-        const successMsg = document.getElementById('successMessage');
-        errorMsg.classList.add('hidden');
-        successMsg.classList.add('hidden');
-
-        // Validate at least one task type is selected
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.querySelector('.submit-text').classList.add('hidden');
+        submitBtn.querySelector('.submit-loading').classList.remove('hidden');
+        
+        // Validate task types
         const selectedTypes = Array.from(taskTypeCheckboxes).filter(cb => cb.checked);
         if (selectedTypes.length === 0) {
-            errorMsg.textContent = 'Please select at least one task type (Screenshot or Recording)';
-            errorMsg.classList.remove('hidden');
+            showToast('error', 'Validation Error', 'Please select at least one task type');
+            resetSubmitButton();
             return;
         }
 
-        // Build request payload
+        // Build payload
         const formData = new FormData(form);
         const payload = {
             task_types: selectedTypes.map(cb => cb.value)
@@ -288,13 +714,13 @@
             
             if (value && value !== '') {
                 // Convert checkboxes to booleans
-                if (['headless', 'full_page', 'scroll_enabled', 'scroll_up_after'].includes(key)) {
+                if (['headless', 'full_page', 'scroll_enabled', 'scroll_up_after', 'camoufox_fallback'].includes(key)) {
                     payload[key] = value === 'true';
                 }
                 // Convert numbers
-                else if (['viewport_width', 'viewport_height', 'wait_timeout', 'quality', 
+                        else if (['viewport_width', 'viewport_height', 'wait_timeout', 'quality', 
                           'clip_x', 'clip_y', 'clip_width', 'clip_height', 
-                          'record_duration', 'scroll_speed'].includes(key)) {
+                                  'record_duration', 'scroll_speed', 'scroll_timeout'].includes(key)) {
                     payload[key] = parseInt(value);
                 }
                 else {
@@ -307,22 +733,22 @@
         const clipFields = ['clip_x', 'clip_y', 'clip_width', 'clip_height'];
         const clipProvided = clipFields.filter(f => payload[f] !== undefined);
         if (clipProvided.length > 0 && clipProvided.length < 4) {
-            errorMsg.textContent = 'All clip fields (x, y, width, height) must be provided together';
-            errorMsg.classList.remove('hidden');
+            showToast('error', 'Validation Error', 'All clip fields (x, y, width, height) must be provided together');
+            resetSubmitButton();
             return;
         }
 
-        // Validation: full_page and clip cannot be combined
+        // Validation: full_page and clip
         if (payload.full_page && clipProvided.length > 0) {
-            errorMsg.textContent = 'Cannot use clip fields with full_page screenshot';
-            errorMsg.classList.remove('hidden');
+            showToast('error', 'Validation Error', 'Cannot use clip fields with full page screenshot');
+            resetSubmitButton();
             return;
         }
 
         // Validation: quality only for JPEG
         if (payload.quality && payload.image_type !== 'jpeg') {
-            errorMsg.textContent = 'Quality can only be set for JPEG images';
-            errorMsg.classList.remove('hidden');
+            showToast('error', 'Validation Error', 'Quality can only be set for JPEG images');
+            resetSubmitButton();
             return;
         }
 
@@ -336,21 +762,25 @@
             const result = await response.json();
             
             if (response.ok) {
-                successMsg.textContent = 'Task(s) submitted successfully!';
-                successMsg.classList.remove('hidden');
+                showToast('success', 'Success!', 'Task(s) submitted successfully. Redirecting...');
                 
-                // Redirect to tasks page after 1.5 seconds
                 setTimeout(() => {
                     window.location.href = '/tasks';
                 }, 1500);
             } else {
-                errorMsg.textContent = JSON.stringify(result);
-                errorMsg.classList.remove('hidden');
+                showToast('error', 'Submission Failed', JSON.stringify(result));
+                resetSubmitButton();
             }
         } catch (error) {
-            errorMsg.textContent = 'Error: ' + error.message;
-            errorMsg.classList.remove('hidden');
+            showToast('error', 'Error', error.message);
+            resetSubmitButton();
         }
     });
+
+    function resetSubmitButton() {
+        submitBtn.disabled = false;
+        submitBtn.querySelector('.submit-text').classList.remove('hidden');
+        submitBtn.querySelector('.submit-loading').classList.add('hidden');
+    }
 </script>
 {% endblock %}

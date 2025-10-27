@@ -1,91 +1,402 @@
 {% extends "base.html" %}
 
-{% block title %}Task Details{% endblock %}
+{% block title %}Task Details - {{ task.id[:8] }}{% endblock %}
 
 {% block content %}
-<div class="mb-6">
-    <a href="/tasks" class="text-blue-600 hover:text-blue-800">&larr; Back to All Tasks</a>
+<div class="max-w-7xl mx-auto">
+    <!-- Breadcrumb Navigation -->
+    <nav class="flex items-center space-x-2 text-sm text-gray-600 mb-6">
+        <a href="/" class="hover:text-blue-600 transition">Home</a>
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+        </svg>
+        <a href="/tasks" class="hover:text-blue-600 transition">All Tasks</a>
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+        </svg>
+        <span class="text-gray-900 font-medium">Task Details</span>
+    </nav>
+
+    <!-- Header Card -->
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-6">
+        <div class="bg-gradient-to-r {% if task.type == 'screenshot' %}from-blue-600 to-blue-700{% else %}from-purple-600 to-purple-700{% endif %} px-6 py-8 text-white">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center space-x-3 mb-3">
+                        <div class="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center">
+                            <span class="text-3xl">{% if task.type == 'screenshot' %}📸{% else %}🎥{% endif %}</span>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold">{{ task.type|capitalize }} Task</h1>
+                            <p class="text-blue-100 text-sm">Created <span class="timestamp" data-timestamp="{{ task.timestamp }}">{{ task.timestamp }}</span></p>
+                        </div>
+                    </div>
+                    
+                    <!-- Status Badge -->
+                    <div class="inline-flex items-center mt-2">
+                        <span id="status-badge" class="px-4 py-2 rounded-full text-sm font-semibold inline-flex items-center backdrop-blur-sm
+                                     {% if task.status == 'completed' %}bg-green-500 bg-opacity-90 text-white
+                                     {% elif task.status == 'running' %}bg-blue-500 bg-opacity-90 text-white
+                                     {% elif task.status == 'failed' %}bg-red-500 bg-opacity-90 text-white
+                                     {% else %}bg-yellow-500 bg-opacity-90 text-white{% endif %}">
+                            <span class="status-icon mr-2 text-lg">
+                                {% if task.status == 'completed' %}✓
+                                {% elif task.status == 'running' %}⟳
+                                {% elif task.status == 'failed' %}✗
+                                {% else %}⏳{% endif %}
+                            </span>
+                            <span class="status-text">{{ task.status|upper }}</span>
+                        </span>
+                        
+                        {% if task.status == 'running' %}
+                        <div class="ml-3 flex space-x-1">
+                            <div class="w-2 h-2 bg-white rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+                            <div class="w-2 h-2 bg-white rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+                            <div class="w-2 h-2 bg-white rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-col space-y-2">
+                    {% if task.status == 'completed' %}
+                    <button onclick="downloadResult()" 
+                            class="flex items-center justify-center px-4 py-2 bg-white text-blue-600 rounded-lg hover:bg-blue-50 transition shadow-md font-medium text-sm">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        Download
+                    </button>
+                    {% endif %}
+                    
+                    {% if task.status == 'failed' %}
+                    <button onclick="retryTask()" 
+                            class="flex items-center justify-center px-4 py-2 bg-white text-orange-600 rounded-lg hover:bg-orange-50 transition shadow-md font-medium text-sm">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        Retry
+                    </button>
+                    {% endif %}
+                    
+                    <button onclick="confirmDelete()" 
+                            class="flex items-center justify-center px-4 py-2 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-lg transition font-medium text-sm">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Bar (for running/queued tasks) -->
+        {% if task.status in ['running', 'queued'] %}
+        <div class="h-1 bg-gray-200">
+            <div class="h-1 bg-blue-600 animate-pulse" style="width: 60%"></div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left Column: Task Info & Parameters -->
+        <div class="lg:col-span-1 space-y-6">
+            <!-- Task Information Card -->
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Task Information
+                    </h2>
+                </div>
+                <div class="px-6 py-4 space-y-4">
+                    <!-- Task ID -->
+                    <div>
+                        <dt class="text-xs font-medium text-gray-500 uppercase mb-1">Task ID</dt>
+                        <dd class="flex items-center space-x-2">
+                            <code class="text-sm font-mono bg-gray-100 px-3 py-1 rounded" id="taskId">{{ task.id }}</code>
+                            <button onclick="copyTaskId()" class="text-blue-600 hover:text-blue-700 p-1 rounded hover:bg-blue-50 transition" title="Copy to clipboard">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                </svg>
+                            </button>
+                        </dd>
+                    </div>
+
+                    <!-- URL -->
+                    <div>
+                        <dt class="text-xs font-medium text-gray-500 uppercase mb-1">Target URL</dt>
+                        <dd>
+                            <a href="{{ task.url }}" target="_blank" class="text-sm text-blue-600 hover:text-blue-700 break-all flex items-start group">
+                                <span class="flex-1">{{ task.url }}</span>
+                                <svg class="w-4 h-4 ml-2 flex-shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                                </svg>
+                            </a>
+                        </dd>
+                    </div>
+
+                    <!-- Type & Format -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <dt class="text-xs font-medium text-gray-500 uppercase mb-1">Type</dt>
+                            <dd class="text-sm font-medium text-gray-900">
+                                <span id="task-type" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if task.type == 'screenshot' %}bg-blue-100 text-blue-800{% else %}bg-purple-100 text-purple-800{% endif %}">
+                                    {{ task.type|capitalize }}
+                                </span>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-gray-500 uppercase mb-1">Format</dt>
+                            <dd id="task-format" class="text-sm font-medium text-gray-900">{{ task.result_format|upper if task.result_format else 'N/A' }}</dd>
+                        </div>
+                    </div>
+
+                    <!-- Timestamp -->
+                    <div>
+                        <dt class="text-xs font-medium text-gray-500 uppercase mb-1">Created</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">
+                            <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <span class="timestamp" data-timestamp="{{ task.timestamp }}">{{ task.timestamp }}</span>
+                        </dd>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Request Parameters Card -->
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <button onclick="toggleParams()" class="w-full px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition">
+                    <h2 class="text-lg font-semibold text-gray-900 flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                        Configuration
+                    </h2>
+                    <svg id="paramsChevron" class="w-5 h-5 text-gray-500 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div id="paramsContent" class="px-6 py-4 bg-gray-50 max-h-96 overflow-y-auto hidden">
+                    <div class="space-y-3">
+                        {% for key, value in task.request_params.items() %}
+                        <div class="flex items-start justify-between py-2 border-b border-gray-200 last:border-0">
+                            <span class="text-xs font-medium text-gray-600 uppercase">{{ key.replace('_', ' ') }}</span>
+                            <span class="text-sm text-gray-900 font-mono ml-4 text-right break-all">
+                                {% if value is sameas true %}
+                                    <span class="text-green-600">✓ Yes</span>
+                                {% elif value is sameas false %}
+                                    <span class="text-gray-400">✗ No</span>
+                                {% elif value is number %}
+                                    {{ value }}
+                                {% else %}
+                                    {{ value }}
+                                {% endif %}
+                            </span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Result Display -->
+        <div class="lg:col-span-2">
+            <!-- Pending State -->
+            <div id="pending-box" class="bg-white rounded-xl shadow-md overflow-hidden {% if task.status not in ['queued','running'] %}hidden{% endif %}">
+                <div class="px-6 py-8 text-center">
+                    <div class="inline-flex items-center justify-center w-16 h-16 bg-yellow-100 rounded-full mb-4">
+                        <svg class="w-8 h-8 text-yellow-600 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-900 mb-2">Task <span id="pending-status" class="text-yellow-600">{{ task.status }}</span></h3>
+                    <p class="text-gray-600 mb-4">Your task is being processed. This page will update automatically when complete.</p>
+                    <div class="inline-flex items-center space-x-2 text-sm text-gray-500">
+                        <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+                        <span>Waiting for completion...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error State -->
+            <div id="error-box" class="bg-white rounded-xl shadow-md overflow-hidden {% if task.status != 'failed' %}hidden{% endif %}">
+                <div class="px-6 py-8">
+                    <div class="flex items-start">
+                        <div class="flex-shrink-0">
+                            <div class="inline-flex items-center justify-center w-12 h-12 bg-red-100 rounded-full">
+                                <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="ml-4 flex-1">
+                            <h3 class="text-lg font-semibold text-red-900 mb-2">Task Failed</h3>
+                            <p class="text-sm text-gray-600 mb-4">The task encountered an error during execution.</p>
+                            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                                <p class="text-xs font-medium text-red-800 mb-1">Error Details:</p>
+                                <pre id="error-text" class="text-xs text-red-700 whitespace-pre-wrap break-all">{% if task.error %}{{ task.error }}{% else %}No error details available{% endif %}</pre>
+                            </div>
+                            <div class="mt-4">
+                                <button onclick="retryTask()" class="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition font-medium text-sm">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    Retry Task
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Success State -->
+            <div id="result-section" class="{% if task.status != 'completed' %}hidden{% endif %}">
+                <!-- Screenshot Result -->
+                <div id="screenshot-section" class="bg-white rounded-xl shadow-md overflow-hidden {% if not (task.status == 'completed' and task.type == 'screenshot') %}hidden{% endif %}">
+                    <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                        <h2 class="text-lg font-semibold text-gray-900 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            Screenshot Result
+                        </h2>
+                        <button onclick="openFullscreen('result-image')" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                            </svg>
+                            Fullscreen
+                        </button>
+                    </div>
+                    <div class="p-6 bg-gray-50">
+                        <div class="relative group">
+                            <img id="result-image" 
+                                 src="{% if task.status == 'completed' and task.type == 'screenshot' %}/media/{{ task.result_file }}{% endif %}" 
+                                 alt="Screenshot" 
+                                 class="w-full h-auto rounded-lg shadow-lg border border-gray-200 cursor-pointer"
+                                 onclick="openFullscreen('result-image')">
+                            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-lg pointer-events-none"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recording Result -->
+                <div id="recording-section" class="bg-white rounded-xl shadow-md overflow-hidden {% if not (task.status == 'completed' and task.type == 'recording') %}hidden{% endif %}">
+                    <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                        <h2 class="text-lg font-semibold text-gray-900 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            Recording Result
+                        </h2>
+                    </div>
+                    <div class="p-6 bg-gray-900">
+                        <video id="result-video" 
+                               controls 
+                               class="w-full h-auto rounded-lg shadow-2xl"
+                               controlsList="nodownload">
+                            <source id="video-source" 
+                                    src="{% if task.status == 'completed' and task.type == 'recording' %}/media/{{ task.result_file }}{% endif %}" 
+                                    type="video/webm">
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
+                </div>
+
+                <!-- Download Section -->
+                <div id="download-section" class="mt-6 bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-6 border border-green-200 {% if task.status != 'completed' %}hidden{% endif %}">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <div class="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center mr-4">
+                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-900">Task Completed Successfully</h3>
+                                <p class="text-sm text-gray-600">Your {{ task.type }} is ready to download</p>
+                            </div>
+                        </div>
+                        <a id="download-link" 
+                           href="{% if task.status == 'completed' %}/media/{{ task.result_file }}{% endif %}" 
+                           download 
+                           class="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-md hover:shadow-lg font-medium">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                            </svg>
+                            Download {{ 'Screenshot' if task.type == 'screenshot' else 'Recording' }}
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
-<div class="bg-white rounded-lg shadow-lg p-6">
-    <div class="flex items-center justify-between mb-6">
-        <div>
-            <div class="flex items-center space-x-2 mb-2">
-                <span class="px-3 py-1 text-sm font-semibold rounded {% if task.type == 'screenshot' %}bg-blue-100 text-blue-800{% else %}bg-purple-100 text-purple-800{% endif %}">
-                    {{ task.type }}
-                </span>
-                <span id="status-badge" class="px-3 py-1 text-sm font-semibold rounded {% if task.status == 'completed' %}bg-green-100 text-green-800{% elif task.status == 'running' %}bg-blue-100 text-blue-800{% elif task.status == 'failed' %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
-                    {{ task.status }}
-                </span>
-            </div>
-            <h1 class="text-2xl font-bold text-gray-900">Task Details</h1>
+<!-- Fullscreen Image Modal -->
+<div id="fullscreenModal" class="hidden fixed inset-0 bg-black bg-opacity-95 z-50 flex items-center justify-center p-4">
+    <button onclick="closeFullscreen()" class="absolute top-4 right-4 text-white hover:text-gray-300 transition z-20 pointer-events-auto">
+        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+    </button>
+    <div id="fullscreenStage" class="relative w-full h-full max-w-full max-h-full flex items-center justify-center select-none cursor-grab" style="touch-action: none;">
+        <img id="fullscreenImage" src="" alt="Fullscreen view" draggable="false" class="max-w-full max-h-full object-contain" />
+        <div id="zoomControls" class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 bg-opacity-80 text-white rounded-full px-3 py-2 flex items-center space-x-2 shadow-lg ring-1 ring-white/20 z-10 pointer-events-auto">
+            <button id="zoomOutBtn" class="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded" title="Zoom Out">−</button>
+            <button id="zoomResetBtn" class="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded" title="Reset">100%</button>
+            <button id="zoomInBtn" class="px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded" title="Zoom In">+</button>
         </div>
-        <button onclick="deleteTask('{{ task.id }}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">
-            Delete Task
-        </button>
     </div>
+</div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div>
-            <h2 class="text-lg font-semibold mb-3">Task Information</h2>
-            <dl class="space-y-2">
-                <div>
-                    <dt class="text-sm font-medium text-gray-500">Task ID</dt>
-                    <dd class="text-sm text-gray-900 font-mono">{{ task.id }}</dd>
-                </div>
-                <div>
-                    <dt class="text-sm font-medium text-gray-500">URL</dt>
-                    <dd class="text-sm text-gray-900 break-all">{{ task.url }}</dd>
-                </div>
-                <div>
-                    <dt class="text-sm font-medium text-gray-500">Timestamp</dt>
-                    <dd class="text-sm text-gray-900">{{ task.timestamp }}</dd>
-                </div>
-                <div>
-                    <dt class="text-sm font-medium text-gray-500">Type</dt>
-                    <dd class="text-sm text-gray-900" id="task-type">{{ task.type }}</dd>
-                </div>
-                <div>
-                    <dt class="text-sm font-medium text-gray-500">Format</dt>
-                    <dd class="text-sm text-gray-900" id="task-format">{{ task.result_format }}</dd>
-                </div>
-            </dl>
-        </div>
-
-        <div>
-            <h2 class="text-lg font-semibold mb-3">Request Parameters</h2>
-            <div class="bg-gray-50 rounded p-3 max-h-64 overflow-y-auto">
-                <pre class="text-xs text-gray-800">{{ task.request_params | tojson(indent=2) }}</pre>
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full transform transition-all">
+        <div class="p-6">
+            <div class="flex items-center justify-center w-12 h-12 mx-auto bg-red-100 rounded-full mb-4">
+                <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+            </div>
+            <h3 class="text-xl font-bold text-gray-900 text-center mb-2">Delete Task?</h3>
+            <p class="text-gray-600 text-center mb-6">
+                Are you sure you want to delete this task? This action cannot be undone and all associated data will be permanently removed.
+            </p>
+            <div class="flex space-x-3">
+                <button onclick="closeDeleteModal()" 
+                        class="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-medium">
+                    Cancel
+                </button>
+                <button id="confirmDeleteBtn" 
+                        class="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium">
+                    Delete Task
+                </button>
             </div>
         </div>
     </div>
+</div>
 
-    <div class="border-t pt-6">
-        <h2 class="text-lg font-semibold mb-4">Result</h2>
-
-        <div id="pending-box" class="border rounded-lg p-4 bg-yellow-50 text-yellow-800" {% if task.status not in ['queued','running'] %}style="display:none"{% endif %}>
-            <p>This task is currently <strong id="pending-status">{{ task.status }}</strong>. Waiting for completion...</p>
-        </div>
-        <div id="error-box" class="border rounded-lg p-4 bg-red-50 text-red-800" {% if task.status != 'failed' %}style="display:none"{% endif %}>
-            <p>Task failed.</p>
-            <pre id="error-text" class="text-xs mt-2">{% if task.error %}{{ task.error }}{% endif %}</pre>
-        </div>
-
-        <div id="result-section" class="{% if task.status != 'completed' %}hidden{% endif %}">
-            <div id="screenshot-section" class="border rounded-lg p-4 bg-gray-50" {% if not (task.status == 'completed' and task.type == 'screenshot') %}style="display:none"{% endif %}>
-                <img id="result-image" src="{% if task.status == 'completed' and task.type == 'screenshot' %}/media/{{ task.result_file }}{% endif %}" alt="Screenshot" class="max-w-full h-auto mx-auto shadow-lg">
+<!-- Toast Notification -->
+<div id="toast" class="fixed top-4 right-4 max-w-md transform translate-x-full transition-transform duration-300 z-50">
+    <div id="toastContent" class="bg-white rounded-lg shadow-2xl border-l-4 p-4">
+        <div class="flex items-center space-x-3">
+            <span id="toastIcon" class="text-2xl"></span>
+            <div class="flex-1">
+                <h4 id="toastTitle" class="font-semibold"></h4>
+                <p id="toastMessage" class="text-sm text-gray-600"></p>
             </div>
-            <div id="recording-section" class="border rounded-lg p-4 bg-gray-50" {% if not (task.status == 'completed' and task.type == 'recording') %}style="display:none"{% endif %}>
-                <video id="result-video" controls class="max-w-full h-auto mx-auto shadow-lg">
-                    <source id="video-source" src="{% if task.status == 'completed' and task.type == 'recording' %}/media/{{ task.result_file }}{% endif %}" type="video/webm">
-                    Your browser does not support the video tag.
-                </video>
-            </div>
-            <div class="mt-4" id="download-section" {% if task.status != 'completed' %}style="display:none"{% endif %}>
-                <a id="download-link" href="{% if task.status == 'completed' %}/media/{{ task.result_file }}{% endif %}" download class="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">
-                    Download {{ 'Screenshot' if task.type == 'screenshot' else 'Recording' }}
-                </a>
-            </div>
+            <button id="toastClose" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+            </button>
         </div>
     </div>
 </div>
@@ -93,34 +404,328 @@
 
 {% block scripts %}
 <script>
-    async function deleteTask(taskId) {
-        if (!confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
-            return;
-        }
+    const taskId = "{{ task.id }}";
 
+    // Toast Functions
+    const toast = document.getElementById('toast');
+    const toastContent = document.getElementById('toastContent');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastTitle = document.getElementById('toastTitle');
+    const toastMessage = document.getElementById('toastMessage');
+    const toastClose = document.getElementById('toastClose');
+
+    function showToast(type, title, message) {
+        const colors = {
+            success: { border: 'border-green-500', icon: '✓' },
+            error: { border: 'border-red-500', icon: '✗' },
+            info: { border: 'border-blue-500', icon: 'ℹ' }
+        };
+        
+        const style = colors[type] || colors.info;
+        toastContent.className = `bg-white rounded-lg shadow-2xl border-l-4 ${style.border} p-4`;
+        toastIcon.textContent = style.icon;
+        toastTitle.textContent = title;
+        toastMessage.textContent = message;
+        
+        toast.classList.remove('translate-x-full');
+        
+        setTimeout(() => {
+            toast.classList.add('translate-x-full');
+        }, 5000);
+    }
+    
+    toastClose.addEventListener('click', () => {
+        toast.classList.add('translate-x-full');
+    });
+
+    // Copy Task ID
+    function copyTaskId() {
+        const taskIdText = document.getElementById('taskId').textContent;
+        navigator.clipboard.writeText(taskIdText).then(() => {
+            showToast('success', 'Copied!', 'Task ID copied to clipboard');
+        }).catch(() => {
+            showToast('error', 'Error', 'Failed to copy task ID');
+        });
+    }
+
+    // Toggle Parameters
+    function toggleParams() {
+        const content = document.getElementById('paramsContent');
+        const chevron = document.getElementById('paramsChevron');
+        content.classList.toggle('hidden');
+        chevron.classList.toggle('rotate-180');
+    }
+
+    // Fullscreen Image
+    function openFullscreen(imageId) {
+        const img = document.getElementById(imageId);
+        const modal = document.getElementById('fullscreenModal');
+        const fullscreenImg = document.getElementById('fullscreenImage');
+        
+        fullscreenImg.src = img.src;
+        fullscreenState = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 };
+        fullscreenImg.style.transform = 'translate(0px, 0px) scale(1)';
+        modal.classList.remove('hidden');
+    }
+
+    function closeFullscreen() {
+        document.getElementById('fullscreenModal').classList.add('hidden');
+    }
+
+    // Close fullscreen on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeFullscreen();
+            closeDeleteModal();
+        }
+    });
+
+    // Download Result
+    function downloadResult() {
+        const link = document.getElementById('download-link');
+        if (link) {
+            link.click();
+            showToast('success', 'Downloading', 'Your file download has started');
+        }
+    }
+
+    // Delete Modal
+    function confirmDelete() {
+        document.getElementById('deleteModal').classList.remove('hidden');
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModal').classList.add('hidden');
+    }
+
+    document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
         try {
             const response = await fetch(`/api/task/${taskId}`, {
                 method: 'DELETE'
             });
 
             if (response.ok) {
-                // Redirect to tasks page after deletion
-                window.location.href = '/tasks';
+                showToast('success', 'Task Deleted', 'Redirecting to task list...');
+                setTimeout(() => {
+                    window.location.href = '/tasks';
+                }, 1500);
             } else {
-                alert('Failed to delete task');
+                showToast('error', 'Delete Failed', 'Failed to delete the task');
             }
         } catch (error) {
-            alert('Error deleting task: ' + error.message);
+            showToast('error', 'Error', error.message);
+        }
+        
+        closeDeleteModal();
+    });
+
+    // Close modal on background click
+    document.getElementById('deleteModal').addEventListener('click', (e) => {
+        if (e.target.id === 'deleteModal') {
+            closeDeleteModal();
+        }
+    });
+
+    const fullscreenModal = document.getElementById('fullscreenModal');
+    fullscreenModal.addEventListener('mousedown', (e) => {
+        // If clicking directly on the backdrop (modal), close. Otherwise, ignore.
+        if (e.target === fullscreenModal) {
+            closeFullscreen();
+        }
+    });
+
+    // Zoom/Pan for fullscreen image
+    let fullscreenState = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 };
+
+    function applyFullscreenTransform() {
+        const img = document.getElementById('fullscreenImage');
+        img.style.transform = `translate(${fullscreenState.x}px, ${fullscreenState.y}px) scale(${fullscreenState.scale})`;
+        const resetBtn = document.getElementById('zoomResetBtn');
+        if (resetBtn) resetBtn.textContent = `${Math.round(fullscreenState.scale * 100)}%`;
+    }
+
+    function clampScale(s) { return Math.min(5, Math.max(0.25, s)); }
+
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const zoomResetBtn = document.getElementById('zoomResetBtn');
+    const fsImg = document.getElementById('fullscreenImage');
+    const fsStage = document.getElementById('fullscreenStage');
+
+    if (zoomInBtn) zoomInBtn.addEventListener('click', (e) => { e.stopPropagation(); fullscreenState.scale = clampScale(fullscreenState.scale * 1.2); applyFullscreenTransform(); });
+    if (zoomOutBtn) zoomOutBtn.addEventListener('click', (e) => { e.stopPropagation(); fullscreenState.scale = clampScale(fullscreenState.scale / 1.2); applyFullscreenTransform(); });
+    if (zoomResetBtn) zoomResetBtn.addEventListener('click', (e) => { e.stopPropagation(); fullscreenState.scale = 1; fullscreenState.x = 0; fullscreenState.y = 0; applyFullscreenTransform(); });
+
+    fsStage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 1.1 : 0.9;
+        fullscreenState.scale = clampScale(fullscreenState.scale * delta);
+        applyFullscreenTransform();
+    }, { passive: false });
+
+    fsStage.addEventListener('mousedown', (e) => {
+        fullscreenState.dragging = true;
+        fullscreenState.startX = e.clientX - fullscreenState.x;
+        fullscreenState.startY = e.clientY - fullscreenState.y;
+        fsStage.classList.add('cursor-grabbing');
+    });
+    window.addEventListener('mouseup', () => { fullscreenState.dragging = false; fsStage.classList.remove('cursor-grabbing'); });
+    window.addEventListener('mousemove', (e) => {
+        if (!fullscreenState.dragging) return;
+        fullscreenState.x = e.clientX - fullscreenState.startX;
+        fullscreenState.y = e.clientY - fullscreenState.startY;
+        applyFullscreenTransform();
+    });
+
+    // Prevent default image drag/ghosting
+    fsImg.addEventListener('dragstart', (e) => e.preventDefault());
+
+    // Touch gestures: pinch to zoom and drag to pan
+    let touchState = { active: false, lastDist: 0, lastMid: { x: 0, y: 0 } };
+
+    function getTouchDistAndMid(touches) {
+        const [t1, t2] = touches;
+        const dx = t2.clientX - t1.clientX;
+        const dy = t2.clientY - t1.clientY;
+        const dist = Math.hypot(dx, dy);
+        const mid = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+        return { dist, mid };
+    }
+
+    fsStage.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+            fullscreenState.dragging = true;
+            fullscreenState.startX = e.touches[0].clientX - fullscreenState.x;
+            fullscreenState.startY = e.touches[0].clientY - fullscreenState.y;
+        } else if (e.touches.length === 2) {
+            touchState.active = true;
+            const { dist, mid } = getTouchDistAndMid(e.touches);
+            touchState.lastDist = dist;
+            touchState.lastMid = mid;
+        }
+    }, { passive: false });
+
+    fsStage.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (e.touches.length === 1 && !touchState.active) {
+            // Pan
+            fullscreenState.x = e.touches[0].clientX - fullscreenState.startX;
+            fullscreenState.y = e.touches[0].clientY - fullscreenState.startY;
+            applyFullscreenTransform();
+        } else if (e.touches.length === 2) {
+            // Pinch zoom
+            const { dist, mid } = getTouchDistAndMid(e.touches);
+            const scaleFactor = dist / (touchState.lastDist || dist);
+            fullscreenState.scale = clampScale(fullscreenState.scale * scaleFactor);
+            touchState.lastDist = dist;
+            touchState.lastMid = mid;
+            applyFullscreenTransform();
+        }
+    }, { passive: false });
+
+    fsStage.addEventListener('touchend', () => {
+        fullscreenState.dragging = false;
+        touchState.active = false;
+    });
+
+    // Retry Task
+    async function retryTask() {
+        try {
+            const response = await fetch(`/api/task/${taskId}/retry`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showToast('success', 'Task Retrying', 'The task has been queued for retry');
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast('error', 'Retry Failed', 'Failed to retry the task');
+            }
+        } catch (error) {
+            showToast('error', 'Error', error.message);
         }
     }
 
+    // Absolute Local Time Display
+    function updateAbsoluteTime() {
+        const elements = document.querySelectorAll('.timestamp');
+        if (!elements || elements.length === 0) return;
+        elements.forEach((el) => {
+            const timestamp = el.dataset.timestamp;
+            if (timestamp) {
+                const date = parseTimestamp(timestamp);
+                const formatted = formatAbsoluteLocal(date);
+                el.textContent = formatted;
+                el.title = date.toLocaleString();
+            }
+        });
+    }
+
+    function formatAbsoluteLocal(date) {
+        const months = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ];
+        const day = date.getDate();
+        const year = date.getFullYear();
+        const monthName = months[date.getMonth()];
+
+        function ordinal(n) {
+            const rem10 = n % 10, rem100 = n % 100;
+            if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+            if (rem10 === 1) return `${n}st`;
+            if (rem10 === 2) return `${n}nd`;
+            if (rem10 === 3) return `${n}rd`;
+            return `${n}th`;
+        }
+
+        let hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        if (hours === 0) hours = 12;
+        const hh = String(hours).padStart(2, '0');
+        const mm = String(minutes).padStart(2, '0');
+
+        const offsetMinutes = date.getTimezoneOffset(); // minutes west of UTC
+        const localMinutesFromUTC = -offsetMinutes; // minutes east of UTC
+        const sign = localMinutesFromUTC >= 0 ? '+' : '-';
+        const absMin = Math.abs(localMinutesFromUTC);
+        const offHours = Math.floor(absMin / 60);
+        const offMinutes = absMin % 60;
+        const offsetStr = offMinutes === 0
+            ? `${sign}${offHours}`
+            : `${sign}${offHours}:${String(offMinutes).padStart(2, '0')}`;
+
+        return `${monthName} ${ordinal(day)}, ${year} ${hh}:${mm} ${ampm} ${offsetStr} GMT`;
+    }
+
+    function parseTimestamp(ts) {
+        if (!ts) return new Date();
+        let normalized = ts.trim();
+        // If no timezone info, assume UTC
+        const hasTZ = /[zZ]|[\+\-]\d{2}:?\d{2}$/.test(normalized);
+        if (!hasTZ) normalized += 'Z';
+        // Ensure 'T' separator and trim fractional seconds to milliseconds
+        normalized = normalized.replace(' ', 'T');
+        normalized = normalized.replace(/(\.\d{3})\d+$/, '$1');
+        const d = new Date(normalized);
+        if (isNaN(d.getTime())) return new Date(ts);
+        return d;
+    }
+
+    updateAbsoluteTime();
+
     // WebSocket live updates
     (function() {
-        const taskId = "{{ task.id }}";
         const backendWsUrl = (function() {
+            const publicBase = "{{ backend_ws_public_url|default('', true) }}";
+            if (publicBase) {
+                const base = publicBase.replace(/\/$/, '');
+                return `${base}/ws/tasks/${taskId}`;
+            }
             const loc = window.location;
             const proto = loc.protocol === 'https:' ? 'wss' : 'ws';
-            // backend is exposed on same host at 8000 in compose
             const host = loc.hostname + ':8000';
             return `${proto}://${host}/ws/tasks/${taskId}`;
         })();
@@ -129,7 +734,7 @@
         try {
             ws = new WebSocket(backendWsUrl);
         } catch (e) {
-            console.warn('WS not available', e);
+            console.warn('WebSocket not available', e);
             return;
         }
 
@@ -145,16 +750,26 @@
         const recordingSection = document.getElementById('recording-section');
         const downloadSection = document.getElementById('download-section');
 
-        function setStatus(text) {
-            if (statusBadge) statusBadge.textContent = text;
-            if (pendingStatus) pendingStatus.textContent = text;
+        function updateStatus(status, icon) {
             if (statusBadge) {
-                statusBadge.className = 'px-3 py-1 text-sm font-semibold rounded ' + (
-                    text === 'completed' ? 'bg-green-100 text-green-800' :
-                    text === 'running' ? 'bg-blue-100 text-blue-800' :
-                    text === 'failed' ? 'bg-red-100 text-red-800' :
-                    'bg-yellow-100 text-yellow-800'
-                );
+                const statusText = statusBadge.querySelector('.status-text');
+                const statusIcon = statusBadge.querySelector('.status-icon');
+                
+                if (statusText) statusText.textContent = status.toUpperCase();
+                if (statusIcon) statusIcon.textContent = icon;
+                
+                const colors = {
+                    completed: 'bg-green-500 bg-opacity-90 text-white',
+                    running: 'bg-blue-500 bg-opacity-90 text-white',
+                    failed: 'bg-red-500 bg-opacity-90 text-white',
+                    queued: 'bg-yellow-500 bg-opacity-90 text-white'
+                };
+                
+                statusBadge.className = `px-4 py-2 rounded-full text-sm font-semibold inline-flex items-center backdrop-blur-sm ${colors[status] || colors.queued}`;
+            }
+            
+            if (pendingStatus) {
+                pendingStatus.textContent = status;
             }
         }
 
@@ -162,60 +777,78 @@
             try {
                 const data = JSON.parse(event.data);
                 if (!data || data.task_id !== taskId) return;
+                
                 if (data.status === 'running' || data.status === 'queued') {
-                    if (pendingBox) pendingBox.style.display = '';
-                    if (errorBox) errorBox.style.display = 'none';
+                    if (pendingBox) pendingBox.classList.remove('hidden');
+                    if (errorBox) errorBox.classList.add('hidden');
                     if (resultSection) resultSection.classList.add('hidden');
-                    setStatus(data.status);
+                    updateStatus(data.status, data.status === 'running' ? '⟳' : '⏳');
                 } else if (data.status === 'failed') {
-                    setStatus('failed');
-                    if (pendingBox) pendingBox.style.display = 'none';
+                    updateStatus('failed', '✗');
+                    if (pendingBox) pendingBox.classList.add('hidden');
                     if (resultSection) resultSection.classList.add('hidden');
                     if (errorBox) {
-                        errorBox.style.display = '';
-                        if (errorText) errorText.textContent = data.error || '';
+                        errorBox.classList.remove('hidden');
+                        if (errorText) errorText.textContent = data.error || 'No error details available';
                     }
+                    showToast('error', 'Task Failed', 'The task has failed. Check error details above.');
                 } else if (data.status === 'completed') {
-                    setStatus('completed');
-                    if (pendingBox) pendingBox.style.display = 'none';
-                    if (errorBox) errorBox.style.display = 'none';
-                    // Refresh task info to get result file without reloading full page
+                    updateStatus('completed', '✓');
+                    if (pendingBox) pendingBox.classList.add('hidden');
+                    if (errorBox) errorBox.classList.add('hidden');
+                    
+                    // Fetch updated task info
                     fetch(`/api/task/${taskId}`)
-                      .then(r => r.json())
-                      .then(payload => {
-                        const t = payload && payload.task ? payload.task : null;
-                        if (!t) return;
-                        if (taskTypeEl) taskTypeEl.textContent = t.type;
-                        if (taskFormatEl) taskFormatEl.textContent = t.result_format || '';
-                        const downloadLink = document.getElementById('download-link');
-                        if (downloadLink && t.result_file) {
-                            downloadLink.href = `/media/${t.result_file}`;
-                        }
-                        if (t.type === 'screenshot') {
-                            const img = document.getElementById('result-image');
-                            if (img && t.result_file) {
-                                img.src = `/media/${t.result_file}`;
+                        .then(r => r.json())
+                        .then(payload => {
+                            const t = payload && payload.task ? payload.task : null;
+                            if (!t) return;
+                            
+                            if (taskFormatEl) taskFormatEl.textContent = (t.result_format || 'N/A').toUpperCase();
+                            
+                            const downloadLink = document.getElementById('download-link');
+                            if (downloadLink && t.result_file) {
+                                downloadLink.href = `/media/${t.result_file}`;
                             }
-                            if (screenshotSection) screenshotSection.style.display = '';
-                            if (recordingSection) recordingSection.style.display = 'none';
-                        } else if (t.type === 'recording') {
-                            const source = document.getElementById('video-source');
-                            const video = document.getElementById('result-video');
-                            if (source && video && t.result_file) {
-                                source.src = `/media/${t.result_file}`;
-                                video.load();
+                            
+                            if (t.type === 'screenshot') {
+                                const img = document.getElementById('result-image');
+                                if (img && t.result_file) {
+                                    img.src = `/media/${t.result_file}`;
+                                }
+                                if (screenshotSection) screenshotSection.classList.remove('hidden');
+                                if (recordingSection) recordingSection.classList.add('hidden');
+                            } else if (t.type === 'recording') {
+                                const source = document.getElementById('video-source');
+                                const video = document.getElementById('result-video');
+                                if (source && video && t.result_file) {
+                                    source.src = `/media/${t.result_file}`;
+                                    video.load();
+                                }
+                                if (screenshotSection) screenshotSection.classList.add('hidden');
+                                if (recordingSection) recordingSection.classList.remove('hidden');
                             }
-                            if (screenshotSection) screenshotSection.style.display = 'none';
-                            if (recordingSection) recordingSection.style.display = '';
-                        }
-                        if (resultSection) resultSection.classList.remove('hidden');
-                        if (downloadSection) downloadSection.style.display = '';
-                      })
-                      .catch(() => {});
+                            
+                            if (resultSection) resultSection.classList.remove('hidden');
+                            if (downloadSection) downloadSection.classList.remove('hidden');
+                            
+                            showToast('success', 'Task Completed!', `Your ${t.type} is ready for download`);
+                        })
+                        .catch(err => {
+                            console.error('Failed to fetch task details:', err);
+                        });
                 }
             } catch (e) {
-                console.warn('Bad WS message', e);
+                console.warn('Bad WebSocket message', e);
             }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket connection closed');
         };
     })();
 </script>

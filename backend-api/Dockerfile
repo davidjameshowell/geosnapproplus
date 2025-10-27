@@ -8,10 +8,13 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    HOME=/home/app \
+    XDG_CACHE_HOME=/home/app/.cache
 
 # Create non-root user
-RUN groupadd -r app && useradd -r -g app app
+RUN groupadd -r app && useradd -r -g app -d /home/app app && \
+    mkdir -p /home/app/.cache && chown -R app:app /home/app
 
 # Install system dependencies for browsers
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,11 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (Camoufox first per docs) and prefetch for app user
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -U camoufox[geoip] && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python -m camoufox fetch
 
-# Install Playwright browsers and Camoufox profiles
+# Install Playwright browsers (Camoufox bundles compatible Firefox; still install engines for other tasks)
 RUN playwright install --with-deps chromium firefox webkit ffmpeg
 
 # Clean up apt lists possibly left by Playwright deps installation

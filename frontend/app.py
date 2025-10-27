@@ -40,10 +40,13 @@ FEATURE_FLAGS = {
     'scroll_enabled': True,
     'scroll_speed': True,
     'scroll_up_after': True,
+    'scroll_timeout': True,
 }
 
 # Backend API configuration (env-driven)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+# Optional public WS base URL for browsers (e.g., when behind TLS/proxy)
+BACKEND_WS_PUBLIC_URL = os.getenv("BACKEND_WS_PUBLIC_URL", "")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "2"))
 
 # In-memory storage for tasks
@@ -113,7 +116,7 @@ def submit():
 def tasks_view():
     with tasks_lock:
         sorted_tasks = sorted(tasks.values(), key=lambda x: x['timestamp'], reverse=True)
-    return render_template('tasks.html', tasks=sorted_tasks)
+    return render_template('tasks.html', tasks=sorted_tasks, backend_ws_public_url=BACKEND_WS_PUBLIC_URL)
 
 
 @app.route('/task/<task_id>')
@@ -122,7 +125,7 @@ def task_detail(task_id):
         task = tasks.get(task_id)
     if not task:
         return "Task not found", 404
-    return render_template('task_detail.html', task=task)
+    return render_template('task_detail.html', task=task, backend_ws_public_url=BACKEND_WS_PUBLIC_URL)
 
 
 @app.route('/api/submit', methods=['POST'])
@@ -174,7 +177,7 @@ def api_submit():
                 'id': backend_task_id,
                 'type': 'screenshot',
                 'url': payload.get('url'),
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'status': 'queued',
                 'request_params': payload.copy(),
                 'metadata': client_metadata
@@ -201,7 +204,7 @@ def api_submit():
                 'id': backend_task_id,
                 'type': 'recording',
                 'url': payload.get('url'),
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'status': 'queued',
                 'request_params': payload.copy(),
                 'metadata': client_metadata

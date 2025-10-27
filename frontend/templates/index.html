@@ -1,30 +1,498 @@
 {% extends "base.html" %}
 
-{% block title %}Screenshot App - Home{% endblock %}
+{% block title %}Screenshot & Recording Service - Capture Any Website{% endblock %}
 
 {% block content %}
-<div class="text-center">
-    <h1 class="text-4xl font-bold text-gray-900 mb-4">Screenshot & Recording Service</h1>
-    <p class="text-xl text-gray-600 mb-8">Capture screenshots and record videos of any website</p>
+<!-- Hero Section -->
+<div class="relative overflow-hidden">
+    <!-- Background Gradient -->
+    <div class="absolute inset-0 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 -z-10"></div>
+    <div class="absolute inset-0 bg-grid-pattern opacity-5 -z-10"></div>
     
-    <div class="flex justify-center space-x-4">
-        <a href="/submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition">
-            Create New Task
-        </a>
-        <a href="/tasks" class="bg-gray-200 text-gray-800 px-6 py-3 rounded-lg hover:bg-gray-300 transition">
-            View All Tasks
-        </a>
-    </div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
+        <div class="text-center">
+            <!-- Badge -->
+            <div class="inline-flex items-center px-4 py-2 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-6 animate-fade-in">
+                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                Fast, Reliable & Stealth-Enabled
+            </div>
 
-    <div class="mt-16 grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h2 class="text-2xl font-semibold mb-3">📸 Screenshots</h2>
-            <p class="text-gray-600">Capture full-page or viewport screenshots in PNG or JPEG format with custom dimensions and quality settings.</p>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h2 class="text-2xl font-semibold mb-3">🎥 Recordings</h2>
-            <p class="text-gray-600">Record website interactions with automatic scrolling and configurable duration up to 120 seconds.</p>
+            <!-- Main Heading -->
+            <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 mb-6 animate-slide-up">
+                Capture Any Website
+                <span class="block text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
+                    Instantly
+                </span>
+            </h1>
+
+            <!-- Subheading -->
+            <p class="text-xl md:text-2xl text-gray-600 mb-10 max-w-3xl mx-auto animate-slide-up-delay">
+                Professional screenshots and recordings with advanced customization, bot detection bypass, and lightning-fast processing
+            </p>
+
+            <!-- CTA Buttons -->
+            <div class="flex flex-col sm:flex-row justify-center gap-4 mb-12 animate-fade-in-delay">
+                <a href="/submit" class="group inline-flex items-center justify-center px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 text-lg font-semibold">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Create New Task
+                    <svg class="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+                    </svg>
+                </a>
+                <a href="/tasks" class="inline-flex items-center justify-center px-8 py-4 bg-white text-gray-800 rounded-xl hover:bg-gray-50 transition-all shadow-md hover:shadow-lg border-2 border-gray-200 text-lg font-semibold">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    View All Tasks
+                </a>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="flex flex-wrap justify-center gap-8 text-center">
+                <div class="flex items-center space-x-2">
+                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span class="text-sm text-gray-600">API Available</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    <span class="text-sm text-gray-600">Lightning Fast</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                    <span class="text-sm text-gray-600">Bot Detection Bypass</span>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+
+<!-- Features Grid -->
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center mb-16">
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Powerful Features</h2>
+        <p class="text-xl text-gray-600 max-w-2xl mx-auto">
+            Everything you need to capture and record websites with professional quality
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <!-- Screenshot Feature -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-blue-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">📸</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Screenshots</h3>
+            <p class="text-gray-600 mb-4">
+                Capture pixel-perfect screenshots of any webpage with customizable dimensions, full-page scrolling, and multiple format options.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    PNG & JPEG formats
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Full-page capture
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Custom viewports
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Quality control
+                </li>
+            </ul>
+        </div>
+
+        <!-- Recording Feature -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-purple-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">🎥</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Video Recording</h3>
+            <p class="text-gray-600 mb-4">
+                Record smooth video captures with automatic scrolling, custom durations, and configurable playback settings.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Up to 120 seconds
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Auto-scroll support
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    WebM format
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Scroll speed control
+                </li>
+            </ul>
+        </div>
+
+        <!-- Stealth Mode -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-green-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-green-500 to-green-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">🥷</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Stealth Mode</h3>
+            <p class="text-gray-600 mb-4">
+                Advanced bot detection bypass using Camoufox with automatic fallback for challenging websites and protection systems.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Bypass Cloudflare
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Auto-retry on failure
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Custom user agents
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Fingerprint masking
+                </li>
+            </ul>
+        </div>
+
+        <!-- Multi-Browser -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-orange-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">🌐</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Multi-Browser</h3>
+            <p class="text-gray-600 mb-4">
+                Test and capture across multiple browser engines to ensure compatibility and accurate rendering results.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Chromium support
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Firefox support
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    WebKit support
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Headless mode
+                </li>
+            </ul>
+        </div>
+
+        <!-- Customization -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-pink-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-pink-500 to-pink-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">⚙️</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Advanced Options</h3>
+            <p class="text-gray-600 mb-4">
+                Fine-tune every aspect with viewport dimensions, wait conditions, timeouts, selectors, and clip regions.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Custom dimensions
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Wait conditions
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Element selectors
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Clip regions
+                </li>
+            </ul>
+        </div>
+
+        <!-- Fast Processing -->
+        <div class="group bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-gray-100 hover:border-yellow-200 hover:-translate-y-2">
+            <div class="w-16 h-16 bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg">
+                <span class="text-3xl">⚡</span>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Lightning Fast</h3>
+            <p class="text-gray-600 mb-4">
+                Optimized infrastructure ensures rapid processing with real-time updates via WebSocket connections.
+            </p>
+            <ul class="space-y-2 text-sm text-gray-600">
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Queue system
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Real-time updates
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Batch processing
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    WebSocket support
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- How It Works Section -->
+<div class="bg-gradient-to-br from-gray-50 to-blue-50 py-20">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16">
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">How It Works</h2>
+            <p class="text-xl text-gray-600 max-w-2xl mx-auto">
+                Get started in three simple steps
+            </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+            <!-- Connection Lines (hidden on mobile) -->
+            <div class="hidden md:block absolute top-20 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-200 via-purple-200 to-green-200"></div>
+
+            <!-- Step 1 -->
+            <div class="relative text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-full text-2xl font-bold mb-6 shadow-lg relative z-10">
+                    1
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-3">Enter URL</h3>
+                <p class="text-gray-600">
+                    Simply paste the website URL you want to capture and choose your task type
+                </p>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="relative text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-full text-2xl font-bold mb-6 shadow-lg relative z-10">
+                    2
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-3">Configure Options</h3>
+                <p class="text-gray-600">
+                    Select from presets or customize dimensions, formats, and advanced settings
+                </p>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="relative text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-500 to-green-600 text-white rounded-full text-2xl font-bold mb-6 shadow-lg relative z-10">
+                    3
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-3">Download Result</h3>
+                <p class="text-gray-600">
+                    Get instant notifications and download your high-quality screenshot or video
+                </p>
+            </div>
+        </div>
+
+        <div class="text-center mt-12">
+            <a href="/submit" class="inline-flex items-center px-8 py-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl text-lg font-semibold">
+                Get Started Now
+                <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+                </svg>
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Use Cases Section -->
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center mb-16">
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Perfect For</h2>
+        <p class="text-xl text-gray-600 max-w-2xl mx-auto">
+            Versatile solutions for various industries and use cases
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">🎨</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Web Designers</h3>
+            <p class="text-sm text-gray-600">Document design iterations and client presentations</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">🔍</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">SEO Professionals</h3>
+            <p class="text-sm text-gray-600">Monitor search results and competitor websites</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">🧪</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">QA Testers</h3>
+            <p class="text-sm text-gray-600">Document bugs and visual regressions</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">📊</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Marketing Teams</h3>
+            <p class="text-sm text-gray-600">Create visual reports and campaign assets</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">👨‍💻</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Developers</h3>
+            <p class="text-sm text-gray-600">Test responsive designs and browser compatibility</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">📝</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Content Creators</h3>
+            <p class="text-sm text-gray-600">Generate thumbnails and social media content</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">🏢</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Agencies</h3>
+            <p class="text-sm text-gray-600">Archive client websites and deliverables</p>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 shadow-md hover:shadow-lg transition-shadow border border-gray-100">
+            <div class="text-4xl mb-4">🔐</div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Compliance</h3>
+            <p class="text-sm text-gray-600">Document regulatory and legal requirements</p>
+        </div>
+    </div>
+</div>
+
+<!-- Final CTA Section -->
+<div class="bg-gradient-to-br from-blue-600 to-purple-600 py-20">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-4xl md:text-5xl font-bold text-white mb-6">
+            Ready to Get Started?
+        </h2>
+        <p class="text-xl text-blue-100 mb-10 max-w-2xl mx-auto">
+            Create your first screenshot or recording in seconds. No signup required.
+        </p>
+        <div class="flex flex-col sm:flex-row justify-center gap-4">
+            <a href="/submit" class="inline-flex items-center justify-center px-8 py-4 bg-white text-blue-600 rounded-xl hover:bg-gray-50 transition-all shadow-lg hover:shadow-xl text-lg font-semibold">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Create Your First Task
+            </a>
+            <a href="/tasks" class="inline-flex items-center justify-center px-8 py-4 bg-transparent border-2 border-white text-white rounded-xl hover:bg-white hover:text-blue-600 transition-all text-lg font-semibold">
+                View Examples
+                <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+                </svg>
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    @keyframes slide-up {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .animate-fade-in {
+        animation: fade-in 0.8s ease-out;
+    }
+    
+    .animate-fade-in-delay {
+        animation: fade-in 0.8s ease-out 0.2s both;
+    }
+    
+    .animate-slide-up {
+        animation: slide-up 0.8s ease-out;
+    }
+    
+    .animate-slide-up-delay {
+        animation: slide-up 0.8s ease-out 0.2s both;
+    }
+    
+    .bg-grid-pattern {
+        background-image: 
+            linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+            linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
+        background-size: 40px 40px;
+    }
+</style>
 {% endblock %}
