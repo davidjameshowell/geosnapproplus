@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Query, APIRouter, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, APIRouter, Body, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel, Field, validator
-from typing import Optional, Literal, Dict
+from typing import Optional, Literal, Dict, Callable, Awaitable
 import asyncio
 from playwright.async_api import async_playwright, Page
 from camoufox.async_api import AsyncCamoufox
@@ -16,6 +16,10 @@ from pyvirtualdisplay import Display
 import uuid
 import re
 import json
+import socket
+import ipaddress
+from urllib.parse import urlparse
+from collections import defaultdict
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
@@ -85,6 +89,101 @@ app = FastAPI(
     description="API service for taking screenshots and recording videos using Playwright",
     version="2.3.3"
 )
+# --- Simple API Key & Rate Limiting ---
+API_KEY = os.getenv("API_KEY", "")
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "60"))
+_rate_buckets: dict[str, list[int]] = defaultdict(list)
+
+def _client_identifier(request: Request) -> str:
+    xf = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if xf:
+        return xf
+    return request.client.host if request.client else "unknown"
+
+async def require_api_key(request: Request):
+    if not API_KEY:
+        return  # auth disabled
+    provided = request.headers.get("x-api-key") or request.query_params.get("api_key")
+    if provided != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+async def rate_limit(request: Request):
+    if RATE_LIMIT_MAX_REQUESTS <= 0:
+        return  # disabled
+    now = int(time.time())
+    ident = _client_identifier(request)
+    bucket = _rate_buckets[ident]
+    # drop old
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    i = 0
+    for ts in bucket:
+        if ts >= window_start:
+            break
+        i += 1
+    if i:
+        del bucket[:i]
+    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    bucket.append(now)
+
+# --- URL/SSRF Validation Helpers ---
+def _is_ip_disallowed(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+    except Exception:
+        return True
+
+def _resolve_host_ips(host: str) -> list[str]:
+    try:
+        infos = socket.getaddrinfo(host, None)
+        ips: list[str] = []
+        for family, _type, _proto, _canonname, sockaddr in infos:
+            try:
+                if family == socket.AF_INET:
+                    ips.append(sockaddr[0])
+                elif family == socket.AF_INET6:
+                    ips.append(sockaddr[0])
+            except Exception:
+                continue
+        return list(dict.fromkeys(ips))
+    except Exception:
+        return []
+
+def _validate_url_public(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise ValueError("Invalid URL format")
+
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http and https schemes are allowed")
+    if not parsed.netloc:
+        raise ValueError("URL must include a valid host")
+
+    host = parsed.hostname or ""
+    if not host:
+        raise ValueError("URL must include a valid host")
+    # Block common localhost tokens early
+    if host in ("localhost", "127.0.0.1", "::1"):
+        raise ValueError("Local addresses are not allowed")
+
+    ips = _resolve_host_ips(host)
+    if not ips:
+        raise ValueError("Unable to resolve host")
+    # Reject if any resolved IP is private or otherwise unsafe
+    for ip in ips:
+        if _is_ip_disallowed(ip):
+            raise ValueError("Target host resolves to a disallowed address")
+    return url
 
 # --- Pydantic Models ---
 class ScreenshotRequest(BaseModel):
@@ -109,6 +208,10 @@ class ScreenshotRequest(BaseModel):
         description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
     )
     post_wait_ms: int = Field(DEFAULT_SETTINGS["post_wait_ms"], ge=0, le=120000, description="Extra delay after navigation/selector before capture (milliseconds)")
+
+    @validator('url')
+    def validate_url_public(cls, v):
+        return _validate_url_public(v)
 
     @validator('quality')
     def validate_quality(cls, v, values):
@@ -147,6 +250,10 @@ class RecordingRequest(BaseModel):
         description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
     )
     pre_record_wait_ms: int = Field(DEFAULT_SETTINGS["pre_record_wait_ms"], ge=0, le=120000, description="Extra delay after navigation before starting actions (milliseconds)")
+
+    @validator('url')
+    def validate_url_public(cls, v):
+        return _validate_url_public(v)
 
 # --- Queue & Task Models ---
 
@@ -252,12 +359,25 @@ async def _queue_worker():
         try:
             kind: TaskKind = record["kind"]
             payload = record["payload"]
+            async def progress_cb(stage: str, details: Dict | None = None):
+                try:
+                    msg = {
+                        "task_id": task_id,
+                        "kind": record["kind"],
+                        "status": "running",
+                        "stage": stage,
+                    }
+                    if details:
+                        msg.update(details)
+                    await ws_manager.broadcast(task_id, msg)
+                except Exception:
+                    pass
             if kind == "screenshot":
                 request_model = ScreenshotRequest(**payload)
-                result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(request_model)
+                result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(request_model, progress_cb)
             else:
                 request_model = RecordingRequest(**payload)
-                result_bytes, content_type = await _capture_raw_recording_in_new_browser(request_model)
+                result_bytes, content_type = await _capture_raw_recording_in_new_browser(request_model, progress_cb)
             record["result_bytes"] = result_bytes
             record["content_type"] = content_type
             record["status"] = "completed"
@@ -359,7 +479,7 @@ async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
         await page.wait_for_timeout(1000)
         await _scroll_to_end(page, request.scroll_speed, direction="up", hard_deadline_ms=deadline_ms)
 
-async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest) -> tuple[bytes, str]:
+async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a video in a new browser instance."""
     display = None
     if not request_model.headless:
@@ -386,12 +506,27 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                 
                 video_path = None
                 try:
+                    if progress_cb:
+                        try:
+                            await progress_cb("navigating", {"url": request_model.url})
+                        except Exception:
+                            pass
                     await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                    if progress_cb:
+                        try:
+                            await progress_cb("navigated", {"url": request_model.url})
+                        except Exception:
+                            pass
                     if await _page_contains_turnstile(page):
                         snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
                         log_info(f"Turnstile indicators present (recording). Body snippet: {snippet[:300].replace('\n',' ')}...")
                     # Optional Stealth Browser fallback
                     if await _page_contains_turnstile(page):
+                        if progress_cb:
+                            try:
+                                await progress_cb("fallback_retry", {"reason": "turnstile_detected"})
+                            except Exception:
+                                pass
                         log_info(
                             f"Turnstile detected for recording {request_model.url}; retrying with Stealth Browser"
                             if request_model.camoufox_fallback else
@@ -406,20 +541,45 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                                                                          record_video_size={'width': request_model.viewport_width, 'height': request_model.viewport_height})
                                 page = await cf_context.new_page()
                                 await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("fallback_success", {})
+                                    except Exception:
+                                        pass
                                 log_info(f"Stealth Browser navigation successful for recording {request_model.url}")
                     
                     # Optional pre-record wait for background resources
                     if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
+                        if progress_cb:
+                            try:
+                                await progress_cb("pre_record_wait_start", {"ms": request_model.pre_record_wait_ms})
+                            except Exception:
+                                pass
                         await page.wait_for_timeout(request_model.pre_record_wait_ms)
+                        if progress_cb:
+                            try:
+                                await progress_cb("pre_record_wait_done", {})
+                            except Exception:
+                                pass
 
                     # Time-box post-load actions. We cap scrolling time via scroll_timeout
                     # and ensure the overall post-load actions respect record_duration.
                     try:
                         if request_model.scroll_enabled:
+                            if progress_cb:
+                                try:
+                                    await progress_cb("scrolling_start", {"timeout_s": request_model.scroll_timeout, "speed": request_model.scroll_speed})
+                                except Exception:
+                                    pass
                             scroll_task = asyncio.create_task(
                                 _perform_scroll_sequence(page, request_model)
                             )
                             await asyncio.wait_for(scroll_task, timeout=request_model.record_duration)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("scrolling_done", {})
+                                except Exception:
+                                    pass
                         else:
                             await asyncio.sleep(request_model.record_duration)
                     except asyncio.TimeoutError:
@@ -440,7 +600,17 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
                     # cf_browser/context are closed by context manager
             
             if video_path and Path(video_path).exists():
+                if progress_cb:
+                    try:
+                        await progress_cb("encoding", {})
+                    except Exception:
+                        pass
                 video_buffer = Path(video_path).read_bytes()
+                if progress_cb:
+                    try:
+                        await progress_cb("encoded", {"bytes_size": len(video_buffer)})
+                    except Exception:
+                        pass
                 return video_buffer, "video/webm"
             else:
                 raise FileNotFoundError("Video file was not created.")
@@ -449,7 +619,7 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest)
             log_info("Stopping virtual display.")
             display.stop()
 
-async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotRequest) -> tuple[bytes, str]:
+async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a screenshot in a new browser instance."""
     display = None
     if not request_model.headless:
@@ -473,7 +643,17 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
             page = await context.new_page()
             
             try:
+                if progress_cb:
+                    try:
+                        await progress_cb("navigating", {"url": request_model.url})
+                    except Exception:
+                        pass
                 await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                if progress_cb:
+                    try:
+                        await progress_cb("navigated", {"url": request_model.url})
+                    except Exception:
+                        pass
                 # Log body snippet for debugging when indicators are present
                 if await _page_contains_turnstile(page):
                     snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
@@ -485,6 +665,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                         log_warning(f"Turnstile detected for {request_model.url} but stealth fallback is disabled; proceeding without fallback")
                     else:
                         log_info(f"Turnstile detected for {request_model.url}; retrying with Stealth Browser")
+                    if progress_cb:
+                        try:
+                            await progress_cb("fallback_retry", {"reason": "turnstile_detected"})
+                        except Exception:
+                            pass
                     await context.close()
                     await browser.close()
                     if request_model.camoufox_fallback:
@@ -501,12 +686,32 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                             await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
                             if await _page_contains_turnstile(page):
                                 log_info("Turnstile still present after Stealth Browser retry")
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("fallback_no_effect", {})
+                                    except Exception:
+                                        pass
                             else:
                                 log_info(f"Stealth Browser navigation successful for {request_model.url}")
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("fallback_success", {})
+                                    except Exception:
+                                        pass
 
                             # If requested, wait for selector before capture
                             if request_model.wait_for_selector:
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("waiting_for_selector", {"selector": request_model.wait_for_selector})
+                                    except Exception:
+                                        pass
                                 await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("selector_ready", {"selector": request_model.wait_for_selector})
+                                    except Exception:
+                                        pass
 
                             # Capture screenshot inside Stealth Browser context and return immediately
                             screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
@@ -515,7 +720,17 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                             if all([request_model.clip_x is not None, request_model.clip_y is not None, request_model.clip_width is not None, request_model.clip_height is not None]):
                                 screenshot_options['clip'] = {'x': request_model.clip_x, 'y': request_model.clip_y, 'width': request_model.clip_width, 'height': request_model.clip_height}
 
+                            if progress_cb:
+                                try:
+                                    await progress_cb("capturing", {})
+                                except Exception:
+                                    pass
                             screenshot_buffer = await page.screenshot(**screenshot_options)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("captured", {"bytes_size": len(screenshot_buffer)})
+                                except Exception:
+                                    pass
                             try:
                                 await cf_context.close()
                             except Exception:
@@ -524,10 +739,30 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                             return screenshot_buffer, content_type
                 
                 if request_model.wait_for_selector:
+                    if progress_cb:
+                        try:
+                            await progress_cb("waiting_for_selector", {"selector": request_model.wait_for_selector})
+                        except Exception:
+                            pass
                     await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                    if progress_cb:
+                        try:
+                            await progress_cb("selector_ready", {"selector": request_model.wait_for_selector})
+                        except Exception:
+                            pass
                 # Optional post-wait for background resources
                 if hasattr(request_model, 'post_wait_ms') and request_model.post_wait_ms:
+                    if progress_cb:
+                        try:
+                            await progress_cb("post_wait_start", {"ms": request_model.post_wait_ms})
+                        except Exception:
+                            pass
                     await page.wait_for_timeout(request_model.post_wait_ms)
+                    if progress_cb:
+                        try:
+                            await progress_cb("post_wait_done", {})
+                        except Exception:
+                            pass
                 
                 screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
                 if request_model.image_type == 'jpeg':
@@ -536,7 +771,17 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                 if all([request_model.clip_x is not None, request_model.clip_y is not None, request_model.clip_width is not None, request_model.clip_height is not None]):
                     screenshot_options['clip'] = {'x': request_model.clip_x, 'y': request_model.clip_y, 'width': request_model.clip_width, 'height': request_model.clip_height}
                 
+                if progress_cb:
+                    try:
+                        await progress_cb("capturing", {})
+                    except Exception:
+                        pass
                 screenshot_buffer = await page.screenshot(**screenshot_options)
+                if progress_cb:
+                    try:
+                        await progress_cb("captured", {"bytes_size": len(screenshot_buffer)})
+                    except Exception:
+                        pass
             finally:
                 # Try closing any open contexts/browsers best-effort
                 try:
@@ -573,7 +818,7 @@ api_router = APIRouter()
 
 # Enqueue endpoints (non-blocking)
 @api_router.post("/queue/screenshot")
-async def enqueue_screenshot(request: ScreenshotRequest):
+async def enqueue_screenshot(request: ScreenshotRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     if _task_queue is None:
         raise HTTPException(status_code=503, detail="Queue not initialized")
     task_id = _create_task("screenshot", request.dict())
@@ -581,7 +826,7 @@ async def enqueue_screenshot(request: ScreenshotRequest):
     return {"task_id": task_id, "status": "queued"}
 
 @api_router.post("/queue/record")
-async def enqueue_record(request: RecordingRequest):
+async def enqueue_record(request: RecordingRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     if _task_queue is None:
         raise HTTPException(status_code=503, detail="Queue not initialized")
     task_id = _create_task("record", request.dict())
@@ -641,14 +886,14 @@ async def get_task_result_base64(task_id: str):
     })
 
 @api_router.post("/screenshot")
-async def take_screenshot_endpoint(request: ScreenshotRequest):
+async def take_screenshot_endpoint(request: ScreenshotRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     async def handler(req):
         screenshot_buffer, content_type = await _capture_raw_screenshot_in_new_browser(req)
         return Response(content=screenshot_buffer, media_type=content_type, headers={"Content-Disposition": f"inline; filename=screenshot.{req.image_type}"})
     return await handle_request(handler, request)
 
 @api_router.post("/screenshot/base64")
-async def take_screenshot_base64_endpoint(request: ScreenshotRequest):
+async def take_screenshot_base64_endpoint(request: ScreenshotRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     async def handler(req):
         screenshot_buffer, _ = await _capture_raw_screenshot_in_new_browser(req)
         base64_image = base64.b64encode(screenshot_buffer).decode('utf-8')
@@ -656,14 +901,14 @@ async def take_screenshot_base64_endpoint(request: ScreenshotRequest):
     return await handle_request(handler, request)
 
 @api_router.post("/record")
-async def take_recording_endpoint(request: RecordingRequest):
+async def take_recording_endpoint(request: RecordingRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     async def handler(req):
         video_buffer, content_type = await _capture_raw_recording_in_new_browser(req)
         return Response(content=video_buffer, media_type=content_type, headers={"Content-Disposition": "inline; filename=recording.webm"})
     return await handle_request(handler, request)
 
 @api_router.post("/record/base64")
-async def take_recording_base64_endpoint(request: RecordingRequest):
+async def take_recording_base64_endpoint(request: RecordingRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
     async def handler(req):
         video_buffer, _ = await _capture_raw_recording_in_new_browser(req)
         base64_video = base64.b64encode(video_buffer).decode('utf-8')

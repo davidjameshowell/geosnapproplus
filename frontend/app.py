@@ -47,6 +47,7 @@ FEATURE_FLAGS = {
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 # Optional public WS base URL for browsers (e.g., when behind TLS/proxy)
 BACKEND_WS_PUBLIC_URL = os.getenv("BACKEND_WS_PUBLIC_URL", "")
+BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "2"))
 
 # In-memory storage for tasks
@@ -165,9 +166,11 @@ def api_submit():
     # Process screenshot tasks via queue
     if 'screenshot' in task_types:
         try:
+            headers = {"X-API-Key": BACKEND_API_KEY} if BACKEND_API_KEY else {}
             enqueue_resp = http.post(
                 f"{BACKEND_URL}/queue/screenshot",
                 json=payload,
+                headers=headers,
                 timeout=(5, 15)
             )
             enqueue_resp.raise_for_status()
@@ -192,9 +195,11 @@ def api_submit():
     # Process recording tasks via queue
     if 'recording' in task_types:
         try:
+            headers = {"X-API-Key": BACKEND_API_KEY} if BACKEND_API_KEY else {}
             enqueue_resp = http.post(
                 f"{BACKEND_URL}/queue/record",
                 json=payload,
+                headers=headers,
                 timeout=(5, 15)
             )
             enqueue_resp.raise_for_status()
@@ -332,15 +337,26 @@ def _poll_backend_queue():
                             ext = 'webm'
                         filename = f"{tid}.{ext}"
                     filepath = MEDIA_DIR / filename
+                    total_bytes = 0
                     with open(filepath, 'wb') as f:
                         for chunk in result_resp.iter_content(chunk_size=8192):
                             if chunk:
                                 f.write(chunk)
+                                try:
+                                    total_bytes += len(chunk)
+                                except Exception:
+                                    pass
                     with tasks_lock:
                         if tid in tasks:
                             tasks[tid]['status'] = 'completed'
                             tasks[tid]['result_file'] = filename
                             tasks[tid]['result_format'] = filename.split('.')[-1]
+                            try:
+                                if total_bytes == 0:
+                                    total_bytes = os.path.getsize(filepath)
+                            except Exception:
+                                total_bytes = None
+                            tasks[tid]['result_size'] = total_bytes
             except Exception as exc:
                 logger.warning("Polling error for task %s (%s): %s", tid, ttype, exc, exc_info=True)
                 continue

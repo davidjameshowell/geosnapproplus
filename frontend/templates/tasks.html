@@ -717,6 +717,33 @@
         }
     });
 
+    // Add file size display for completed tasks by checking media HEAD
+    (function annotateCompletedSizes() {
+        document.querySelectorAll('.task-card').forEach(card => {
+            if (card.dataset.status === 'completed') {
+                const taskId = card.dataset.taskId;
+                const link = card.querySelector('a[href^="/task/"]');
+                const type = card.dataset.type;
+                // Fetch details to get result_file
+                fetch(`/api/task/${taskId}`).then(r => r.json()).then(payload => {
+                    const t = payload && payload.task ? payload.task : null;
+                    if (!t || !t.result_file) return;
+                    fetch(`/media/${t.result_file}`, { method: 'HEAD' }).then(r => {
+                        const size = r.headers.get('Content-Length');
+                        if (!size) return;
+                        const bytes = parseInt(size, 10);
+                        const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`);
+                        const meta = document.createElement('span');
+                        meta.className = 'ml-2 text-xs text-gray-500';
+                        meta.textContent = `· ${human}`;
+                        const header = card.querySelector('.flex-1 .mb-3');
+                        if (header) header.appendChild(meta);
+                    }).catch(()=>{});
+                }).catch(()=>{});
+            }
+        });
+    })();
+
     // Handle auto-refresh toggle
     autoRefresh.addEventListener('change', (e) => {
         if (e.target.checked) {

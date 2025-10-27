@@ -703,6 +703,29 @@
             return;
         }
 
+        // Basic URL validation (client-side)
+        const urlInput = form.querySelector('input[name="url"]');
+        const urlVal = urlInput ? urlInput.value.trim() : '';
+        try {
+            const u = new URL(urlVal);
+            if (!['http:', 'https:'].includes(u.protocol)) {
+                showToast('error', 'Validation Error', 'URL must start with http or https');
+                resetSubmitButton();
+                return;
+            }
+            // Block localhost-style hosts client-side (server also validates)
+            const blocked = ['localhost', '127.0.0.1', '::1'];
+            if (blocked.includes(u.hostname)) {
+                showToast('error', 'Validation Error', 'Local addresses are not allowed');
+                resetSubmitButton();
+                return;
+            }
+        } catch (_) {
+            showToast('error', 'Validation Error', 'Please enter a valid URL');
+            resetSubmitButton();
+            return;
+        }
+
         // Build payload
         const formData = new FormData(form);
         const payload = {

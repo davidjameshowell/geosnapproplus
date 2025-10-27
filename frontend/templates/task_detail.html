@@ -320,7 +320,7 @@
                             </div>
                             <div>
                                 <h3 class="font-semibold text-gray-900">Task Completed Successfully</h3>
-                                <p class="text-sm text-gray-600">Your {{ task.type }} is ready to download</p>
+                                <p class="text-sm text-gray-600">Your {{ task.type }} is ready to download<span id="file-meta"></span></p>
                             </div>
                         </div>
                         <a id="download-link" 
@@ -773,11 +773,66 @@
             }
         }
 
+        // Stage messages UI
+        const stageLog = [];
+        const stageHost = document.createElement('div');
+        stageHost.id = 'stageHost';
+        stageHost.className = 'px-6 py-4 bg-white rounded-xl shadow mb-6 hidden';
+        const anchor = document.querySelector('.lg\\:col-span-2');
+        if (anchor && anchor.firstElementChild) {
+            anchor.insertBefore(stageHost, anchor.firstElementChild);
+        }
+        function formatStage(data) {
+            const stage = data.stage || '';
+            const map = {
+                navigating: 'Navigating to page',
+                navigated: 'Page loaded',
+                waiting_for_selector: `Waiting for element ${data.selector || ''}`,
+                selector_ready: `Element ready ${data.selector || ''}`,
+                post_wait_start: `Waiting extra ${data.ms || ''}ms`,
+                post_wait_done: 'Extra wait done',
+                capturing: 'Capturing',
+                captured: `Captured (${data.bytes_size || '?'} bytes)`,
+                fallback_retry: 'Retrying with Stealth Browser',
+                fallback_success: 'Stealth Browser succeeded',
+                fallback_no_effect: 'Stealth Browser did not bypass protection',
+                scrolling_start: 'Auto-scrolling started',
+                scrolling_done: 'Auto-scrolling finished',
+                encoding: 'Encoding video',
+                encoded: `Video encoded (${data.bytes_size || '?'} bytes)`
+            };
+            return map[stage] || stage;
+        }
+        function renderStages() {
+            if (stageLog.length === 0) {
+                stageHost.classList.add('hidden');
+                return;
+            }
+            stageHost.classList.remove('hidden');
+            stageHost.innerHTML = `
+                <div class="flex items-center mb-2 text-gray-900 font-semibold">
+                    <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Live Progress
+                </div>
+                <ul class="space-y-1 text-sm text-gray-700">
+                    ${stageLog.map(s => `<li>• ${s}</li>`).join('')}
+                </ul>
+            `;
+        }
+
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
                 if (!data || data.task_id !== taskId) return;
                 
+                if (data.status === 'running' && data.stage) {
+                    try {
+                        stageLog.push(formatStage(data));
+                        if (stageLog.length > 50) stageLog.shift();
+                        renderStages();
+                    } catch (e) {}
+                }
+
                 if (data.status === 'running' || data.status === 'queued') {
                     if (pendingBox) pendingBox.classList.remove('hidden');
                     if (errorBox) errorBox.classList.add('hidden');
@@ -831,6 +886,22 @@
                             
                             if (resultSection) resultSection.classList.remove('hidden');
                             if (downloadSection) downloadSection.classList.remove('hidden');
+                            // Show file size if available
+                            try {
+                                const meta = document.getElementById('file-meta');
+                                if (meta && t.result_file) {
+                                    fetch(`/media/${t.result_file}`, { method: 'HEAD' })
+                                        .then(r => {
+                                            const size = r.headers.get('Content-Length');
+                                            if (size) {
+                                                const bytes = parseInt(size, 10);
+                                                const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`);
+                                                meta.textContent = ` • ${human}`;
+                                            }
+                                        })
+                                        .catch(()=>{});
+                                }
+                            } catch(e) {}
                             
                             showToast('success', 'Task Completed!', `Your ${t.type} is ready for download`);
                         })
