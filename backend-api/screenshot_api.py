@@ -80,7 +80,9 @@ DEFAULT_SETTINGS = {
     "scroll_timeout": 10,
     "headless": True,
     "post_wait_ms": 1500,
-    "pre_record_wait_ms": 1000
+    "pre_record_wait_ms": 1000, 
+    "pause_before_scroll_ms": 0,
+    "post_scroll_pause_ms": 0
 }
 
 # --- FastAPI App Initialization ---
@@ -250,6 +252,8 @@ class RecordingRequest(BaseModel):
         description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
     )
     pre_record_wait_ms: int = Field(DEFAULT_SETTINGS["pre_record_wait_ms"], ge=0, le=120000, description="Extra delay after navigation before starting actions (milliseconds)")
+    pause_before_scroll_ms: int = Field(DEFAULT_SETTINGS["pause_before_scroll_ms"], ge=0, le=120000, description="Pause duration before starting auto-scroll (milliseconds)")
+    post_scroll_pause_ms: int = Field(DEFAULT_SETTINGS["post_scroll_pause_ms"], ge=0, le=120000, description="Pause duration after scrolling completes (milliseconds)")
 
     @validator('url')
     def validate_url_public(cls, v):
@@ -435,24 +439,28 @@ async def _shutdown_queue_worker():
 # --- Helper Functions ---
 
 async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down", hard_deadline_ms: Optional[int] = None):
-    """Scrolls until the end of the page is reached in the given direction."""
+    """Scrolls until the end of the page is reached in the given direction.
+    If the page exhibits infinite scrolling behavior (document height keeps increasing and never stabilizes),
+    apply a 30s cutoff to avoid scrolling forever. Otherwise, allow scrolling to complete naturally with no cap.
+    """
     last_pos = -1
     stable_count = 0
     max_stable_count = 15
     scroll_by = scroll_speed if direction == "down" else -scroll_speed
 
+    # Infinite-scroll detection: track page height growth and elapsed time
+    start_ms = int(time.time() * 1000)
+    last_height = await page.evaluate("document.body ? document.body.scrollHeight : 0")
+    height_growth_events = 0
+    INFINITE_SCROLL_CUTOFF_MS = 30000  # 30s, nonconfigurable
+
     while True:
-        # Respect hard deadline if provided
-        if hard_deadline_ms is not None:
-            now_ms = int(time.time() * 1000)
-            if now_ms >= hard_deadline_ms:
-                log_info(f"Scroll hard deadline reached while scrolling {direction}")
-                break
         await page.evaluate(f"window.scrollBy(0, {scroll_by})")
         await page.wait_for_timeout(100)
-        
-        current_pos = await page.evaluate("window.pageYOffset")
 
+        current_pos, current_height = await page.evaluate("[window.pageYOffset, document.body ? document.body.scrollHeight : 0]")
+
+        # Detect stabilization of position to decide natural end
         if current_pos == last_pos:
             stable_count += 1
             if stable_count >= max_stable_count:
@@ -461,23 +469,32 @@ async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down",
         else:
             stable_count = 0
             last_pos = current_pos
-        
+
+        # Detect reaching top while scrolling up
         if direction == "up" and current_pos == 0:
             log_info("Reached top of page.")
             break
 
-async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
-    """Manages the sequence of scrolling actions (down, pause, up)."""
-    # Establish a hard deadline for total scroll time to avoid infinite scrolling pages
-    start_ms = int(time.time() * 1000)
-    deadline_ms = start_ms + (request.scroll_timeout * 1000)
+        # Track growth of page height as a proxy for infinite loading
+        if current_height > last_height:
+            height_growth_events += 1
+            last_height = current_height
 
-    await _scroll_to_end(page, request.scroll_speed, direction="down", hard_deadline_ms=deadline_ms)
-    
+        # Only apply 30s cutoff if height keeps growing and page never stabilizes
+        now_ms = int(time.time() * 1000)
+        if (now_ms - start_ms) >= INFINITE_SCROLL_CUTOFF_MS and height_growth_events >= 10 and stable_count < max_stable_count:
+            log_info(f"Infinite scroll detected; stopping after {INFINITE_SCROLL_CUTOFF_MS // 1000}s while scrolling {direction}")
+            break
+
+async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
+    """Manages the sequence of scrolling actions (down, pause, up).
+    Allows finite pages to complete; caps only true infinite scroll at 30s.
+    """
+    await _scroll_to_end(page, request.scroll_speed, direction="down")
     if request.scroll_up_after:
         log_info("Pausing at bottom before scrolling up...")
         await page.wait_for_timeout(1000)
-        await _scroll_to_end(page, request.scroll_speed, direction="up", hard_deadline_ms=deadline_ms)
+        await _scroll_to_end(page, request.scroll_speed, direction="up")
 
 async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a video in a new browser instance."""
@@ -562,29 +579,49 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                             except Exception:
                                 pass
 
-                    # Time-box post-load actions. We cap scrolling time via scroll_timeout
-                    # and ensure the overall post-load actions respect record_duration.
-                    try:
-                        if request_model.scroll_enabled:
+                    # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
+                    # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
+                    # for post-scroll waiting. When auto-scroll is disabled, we use record_duration.
+                    if request_model.scroll_enabled:
+                        # Optional explicit pause before starting scroll sequence
+                        if request_model.pause_before_scroll_ms and request_model.pause_before_scroll_ms > 0:
                             if progress_cb:
                                 try:
-                                    await progress_cb("scrolling_start", {"timeout_s": request_model.scroll_timeout, "speed": request_model.scroll_speed})
+                                    await progress_cb("pause_before_scroll_start", {"ms": request_model.pause_before_scroll_ms})
                                 except Exception:
                                     pass
-                            scroll_task = asyncio.create_task(
-                                _perform_scroll_sequence(page, request_model)
-                            )
-                            await asyncio.wait_for(scroll_task, timeout=request_model.record_duration)
+                            await page.wait_for_timeout(request_model.pause_before_scroll_ms)
                             if progress_cb:
                                 try:
-                                    await progress_cb("scrolling_done", {})
+                                    await progress_cb("pause_before_scroll_done", {})
                                 except Exception:
                                     pass
-                        else:
-                            await asyncio.sleep(request_model.record_duration)
-                    except asyncio.TimeoutError:
-                        log_info(f"Recording duration of {request_model.record_duration}s reached. Stopping actions.")
-                        # The task will be cancelled automatically by wait_for
+                        if progress_cb:
+                            try:
+                                await progress_cb("scrolling_start", {"infinite_cap_s": 30, "speed": request_model.scroll_speed})
+                            except Exception:
+                                pass
+                        await _perform_scroll_sequence(page, request_model)
+                        if progress_cb:
+                            try:
+                                await progress_cb("scrolling_done", {})
+                            except Exception:
+                                pass
+                        # Post-scroll pause (milliseconds)
+                        if request_model.post_scroll_pause_ms and request_model.post_scroll_pause_ms > 0:
+                            if progress_cb:
+                                try:
+                                    await progress_cb("post_scroll_pause_start", {"ms": request_model.post_scroll_pause_ms})
+                                except Exception:
+                                    pass
+                            await page.wait_for_timeout(request_model.post_scroll_pause_ms)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("post_scroll_pause_done", {})
+                                except Exception:
+                                    pass
+                    else:
+                        await asyncio.sleep(request_model.record_duration)
                     
                 finally:
                     try:
