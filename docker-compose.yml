@@ -11,8 +11,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=DEBUG
-      - WIREGUARD_PRIVATE_KEY=
-      - WIREGUARD_ADDRESSES=
 
   gluetun-api:
     build:
@@ -24,6 +22,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=DEBUG
+      - WIREGUARD_PRIVATE_KEY=
+      - WIREGUARD_ADDRESSES=
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
