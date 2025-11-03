@@ -1,0 +1,5 @@
+import os
+
+INSTANCE_LIMIT = int(os.environ.get("INSTANCE_LIMIT", 1))
+WIREGUARD_PRIVATE_KEY = os.environ.get("WIREGUARD_PRIVATE_KEY")
+WIREGUARD_ADDRESSES = os.environ.get("WIREGUARD_ADDRESSES")
