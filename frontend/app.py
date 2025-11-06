@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, send_from_directory, session
 import requests
 from datetime import datetime
 import uuid
@@ -14,6 +14,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 app = Flask(__name__)
+# Configure session secret key (use environment variable or generate one)
+app.secret_key = os.getenv("SECRET_KEY", os.urandom(24).hex())
+# Session cookie settings
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Logging configuration
 logging.basicConfig(
@@ -49,9 +54,11 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 BACKEND_WS_PUBLIC_URL = os.getenv("BACKEND_WS_PUBLIC_URL", "")
 BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "2"))
+GLUETUN_API_URL = os.getenv("GLUETUN_API_URL", "http://localhost:8001")
 
-# In-memory storage for tasks
-tasks = {}
+# In-memory storage for tasks: {session_id: {task_id: task_data}}
+# Each user session gets their own task dictionary
+tasks = {}  # Structure: {session_id: {task_id: task_data}}
 tasks_lock = threading.Lock()
 
 # Create directory for storing media files (env-driven)
@@ -103,6 +110,28 @@ def _safe_media_path(filename):
         return None
 
 
+def _get_session_id():
+    """
+    Get or create a session ID for the current user.
+    Session ID is stored in Flask session (cookie-based).
+    """
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+        logger.debug(f"Created new session ID: {session['session_id']}")
+    return session['session_id']
+
+
+def _get_user_tasks(session_id):
+    """
+    Get the task dictionary for a specific session.
+    Creates an empty dictionary if it doesn't exist.
+    """
+    with tasks_lock:
+        if session_id not in tasks:
+            tasks[session_id] = {}
+        return tasks[session_id]
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -110,20 +139,22 @@ def index():
 
 @app.route('/submit')
 def submit():
-    return render_template('submit.html', flags=FEATURE_FLAGS)
+    return render_template('submit.html', flags=FEATURE_FLAGS, gluetun_api_url=GLUETUN_API_URL)
 
 
 @app.route('/tasks')
 def tasks_view():
-    with tasks_lock:
-        sorted_tasks = sorted(tasks.values(), key=lambda x: x['timestamp'], reverse=True)
+    session_id = _get_session_id()
+    user_tasks = _get_user_tasks(session_id)
+    sorted_tasks = sorted(user_tasks.values(), key=lambda x: x['timestamp'], reverse=True)
     return render_template('tasks.html', tasks=sorted_tasks, backend_ws_public_url=BACKEND_WS_PUBLIC_URL)
 
 
 @app.route('/task/<task_id>')
 def task_detail(task_id):
-    with tasks_lock:
-        task = tasks.get(task_id)
+    session_id = _get_session_id()
+    user_tasks = _get_user_tasks(session_id)
+    task = user_tasks.get(task_id)
     if not task:
         return "Task not found", 404
     return render_template('task_detail.html', task=task, backend_ws_public_url=BACKEND_WS_PUBLIC_URL)
@@ -163,6 +194,10 @@ def api_submit():
     if payload.get('image_type') == 'png':
         payload.pop('quality', None)
     
+    # Get user's session ID
+    session_id = _get_session_id()
+    user_tasks = _get_user_tasks(session_id)
+    
     # Process screenshot tasks via queue
     if 'screenshot' in task_types:
         try:
@@ -186,7 +221,7 @@ def api_submit():
                 'metadata': client_metadata
             }
             with tasks_lock:
-                tasks[backend_task_id] = task
+                user_tasks[backend_task_id] = task
             results['screenshot'] = {'task_id': backend_task_id, 'status': 'queued'}
         except Exception as e:
             logger.exception("Failed to enqueue screenshot task")
@@ -215,7 +250,7 @@ def api_submit():
                 'metadata': client_metadata
             }
             with tasks_lock:
-                tasks[backend_task_id] = task
+                user_tasks[backend_task_id] = task
             results['recording'] = {'task_id': backend_task_id, 'status': 'queued'}
         except Exception as e:
             logger.exception("Failed to enqueue recording task")
@@ -226,8 +261,11 @@ def api_submit():
 
 @app.route('/api/task/<task_id>', methods=['DELETE'])
 def delete_task(task_id):
+    session_id = _get_session_id()
+    user_tasks = _get_user_tasks(session_id)
+    
     with tasks_lock:
-        task = tasks.get(task_id)
+        task = user_tasks.get(task_id)
     if not task:
         return jsonify({'error': 'Task not found'}), 404
     
@@ -242,16 +280,19 @@ def delete_task(task_id):
     
     # Remove from memory
     with tasks_lock:
-        if task_id in tasks:
-            del tasks[task_id]
+        if task_id in user_tasks:
+            del user_tasks[task_id]
     
     return jsonify({'status': 'deleted'})
 
 
 @app.route('/api/task/<task_id>', methods=['GET'])
 def get_task(task_id):
+    session_id = _get_session_id()
+    user_tasks = _get_user_tasks(session_id)
+    
     with tasks_lock:
-        task = tasks.get(task_id)
+        task = user_tasks.get(task_id)
         if not task:
             return jsonify({'error': 'Task not found'}), 404
         # Return a shallow copy safe for JSON
@@ -288,14 +329,25 @@ _stop_event = threading.Event()
 def _poll_backend_queue():
     while not _stop_event.is_set():
         try:
+            # Collect all pending tasks from all sessions
+            pending = []
             with tasks_lock:
-                pending = [t.copy() for t in tasks.values() if t.get('status') in ('queued', 'running')]
+                for session_id, user_tasks in tasks.items():
+                    for tid, task in user_tasks.items():
+                        if task.get('status') in ('queued', 'running'):
+                            task_copy = task.copy()
+                            task_copy['_session_id'] = session_id  # Track which session it belongs to
+                            pending.append(task_copy)
         except Exception:
             pending = []
 
         for t in pending:
             tid = t['id']
             ttype = t['type']
+            session_id = t.get('_session_id')
+            if not session_id:
+                continue
+                
             try:
                 status_resp = http.get(f"{BACKEND_URL}/queue/{tid}", timeout=(5, 10))
                 if status_resp.status_code == 404:
@@ -303,17 +355,24 @@ def _poll_backend_queue():
                 status_data = status_resp.json()
                 new_status = status_data.get('status')
 
+                with tasks_lock:
+                    user_tasks = tasks.get(session_id, {})
+                    if tid not in user_tasks:
+                        continue  # Task was deleted or session doesn't exist
+
                 if new_status in ('queued', 'running'):
                     with tasks_lock:
-                        if tid in tasks:
-                            tasks[tid]['status'] = new_status
+                        user_tasks = tasks.get(session_id, {})
+                        if tid in user_tasks:
+                            user_tasks[tid]['status'] = new_status
                     continue
 
                 if new_status == 'failed':
                     with tasks_lock:
-                        if tid in tasks:
-                            tasks[tid]['status'] = 'failed'
-                            tasks[tid]['error'] = status_data.get('error')
+                        user_tasks = tasks.get(session_id, {})
+                        if tid in user_tasks:
+                            user_tasks[tid]['status'] = 'failed'
+                            user_tasks[tid]['error'] = status_data.get('error')
                     continue
 
                 if new_status == 'completed':
@@ -347,16 +406,17 @@ def _poll_backend_queue():
                                 except Exception:
                                     pass
                     with tasks_lock:
-                        if tid in tasks:
-                            tasks[tid]['status'] = 'completed'
-                            tasks[tid]['result_file'] = filename
-                            tasks[tid]['result_format'] = filename.split('.')[-1]
+                        user_tasks = tasks.get(session_id, {})
+                        if tid in user_tasks:
+                            user_tasks[tid]['status'] = 'completed'
+                            user_tasks[tid]['result_file'] = filename
+                            user_tasks[tid]['result_format'] = filename.split('.')[-1]
                             try:
                                 if total_bytes == 0:
                                     total_bytes = os.path.getsize(filepath)
                             except Exception:
                                 total_bytes = None
-                            tasks[tid]['result_size'] = total_bytes
+                            user_tasks[tid]['result_size'] = total_bytes
             except Exception as exc:
                 logger.warning("Polling error for task %s (%s): %s", tid, ttype, exc, exc_info=True)
                 continue

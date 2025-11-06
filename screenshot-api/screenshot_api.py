@@ -18,8 +18,9 @@ import re
 import json
 import socket
 import ipaddress
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from collections import defaultdict
+import aiohttp
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +64,14 @@ def log_warning(message: str) -> None:
         pass
     logger.warning(message)
 
+def log_error(message: str) -> None:
+    try:
+        for _lg in _access_loggers:
+            _lg.error(message)
+    except Exception:
+        pass
+    logger.error(message)
+
 # Default settings for API parameters
 DEFAULT_SETTINGS = {
     "viewport_width": 1920,
@@ -84,6 +93,88 @@ DEFAULT_SETTINGS = {
     "pause_before_scroll_ms": 0,
     "post_scroll_pause_ms": 0
 }
+
+# Gluetun API configuration
+GLUETUN_API_URL = os.getenv("GLUETUN_API_URL", "http://gluetun-api:8001")
+
+def _parse_positive_int(value: str | None, default: int) -> int:
+    try:
+        if value is None:
+            return default
+        return max(0, int(value))
+    except Exception:
+        return default
+
+VPN_SHARED_PROXY_IDLE_TTL_SECONDS = _parse_positive_int(os.getenv("VPN_SHARED_PROXY_IDLE_TTL_SECONDS"), 20)
+
+# --- Shared Proxy Manager ---
+# Tracks gluetun proxies by VPN location to allow sharing between screenshot and recording tasks
+# Value schema: {
+#   'container_id': str,
+#   'proxy_url': str,
+#   'ref_count': int,
+#   'destroy_task': Optional[asyncio.Task]
+# }
+_shared_proxy_manager: Dict[str, Dict] = {}
+_proxy_manager_lock = asyncio.Lock()
+
+async def _release_shared_proxy(location_key: str):
+    """Release a reference to a shared proxy. Decrements ref count and destroys if needed."""
+    async with _proxy_manager_lock:
+        if location_key not in _shared_proxy_manager:
+            log_warning(f"[VPN] Attempted to release proxy for {location_key} but it doesn't exist")
+            return
+        
+        proxy_info = _shared_proxy_manager[location_key]
+        proxy_info['ref_count'] -= 1
+        log_info(f"[VPN] Released shared proxy for {location_key} (ref_count={proxy_info['ref_count']})")
+        
+        # If ref count reaches 0, destroy the proxy
+        if proxy_info['ref_count'] <= 0:
+            container_id = proxy_info['container_id']
+            if VPN_SHARED_PROXY_IDLE_TTL_SECONDS <= 0:
+                log_info(f"[VPN] Reference count reached 0 for {location_key}, destroying proxy container {container_id} immediately")
+                del _shared_proxy_manager[location_key]
+                asyncio.create_task(_destroy_gluetun_proxy(container_id))
+            else:
+                if proxy_info.get('destroy_task') is not None:
+                    # Should not normally happen, but cancel any existing teardown task before scheduling a new one
+                    try:
+                        proxy_info['destroy_task'].cancel()
+                    except Exception:
+                        pass
+                log_info(f"[VPN] Reference count reached 0 for {location_key}, scheduling destroy in {VPN_SHARED_PROXY_IDLE_TTL_SECONDS}s (container {container_id})")
+                destroy_task = asyncio.create_task(_schedule_proxy_teardown(location_key, container_id))
+                proxy_info['destroy_task'] = destroy_task
+
+async def _schedule_proxy_teardown(location_key: str, container_id: str) -> None:
+    try:
+        if VPN_SHARED_PROXY_IDLE_TTL_SECONDS > 0:
+            await asyncio.sleep(VPN_SHARED_PROXY_IDLE_TTL_SECONDS)
+    except asyncio.CancelledError:
+        log_info(f"[VPN] Cancelled idle destroy timer for {location_key}")
+        return
+
+    try:
+        async with _proxy_manager_lock:
+            proxy_info = _shared_proxy_manager.get(location_key)
+            if not proxy_info:
+                return
+            if proxy_info.get('ref_count', 0) > 0:
+                proxy_info['destroy_task'] = None
+                return
+            current_task = proxy_info.get('destroy_task')
+            if current_task is not asyncio.current_task():
+                # Another task took over; leave cleanup to that task
+                return
+            proxy_info['destroy_task'] = None
+            _shared_proxy_manager.pop(location_key, None)
+        log_info(f"[VPN] Destroying idle shared proxy for {location_key} (container {container_id})")
+        await _destroy_gluetun_proxy(container_id)
+    except asyncio.CancelledError:
+        log_info(f"[VPN] Cancelled idle destroy timer for {location_key}")
+    except Exception as e:
+        log_warning(f"[VPN] Error during proxy teardown for {location_key}: {e}")
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -210,6 +301,8 @@ class ScreenshotRequest(BaseModel):
         description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
     )
     post_wait_ms: int = Field(DEFAULT_SETTINGS["post_wait_ms"], ge=0, le=120000, description="Extra delay after navigation/selector before capture (milliseconds)")
+    vpn_country: Optional[str] = Field(None, description="VPN country for proxy (requires vpn_city)")
+    vpn_city: Optional[str] = Field(None, description="VPN city for proxy (requires vpn_country)")
 
     @validator('url')
     def validate_url_public(cls, v):
@@ -231,6 +324,14 @@ class ScreenshotRequest(BaseModel):
             v is not None
         ]):
             raise ValueError("Cannot use 'clip' and 'full_page' options simultaneously.")
+        return v
+    
+    @validator('vpn_city')
+    def validate_vpn_location(cls, v, values):
+        # If one VPN field is provided, both must be provided
+        if values.get('vpn_country') is not None or v is not None:
+            if values.get('vpn_country') is None or v is None:
+                raise ValueError("Both vpn_country and vpn_city must be provided together")
         return v
 
 class RecordingRequest(BaseModel):
@@ -254,10 +355,20 @@ class RecordingRequest(BaseModel):
     pre_record_wait_ms: int = Field(DEFAULT_SETTINGS["pre_record_wait_ms"], ge=0, le=120000, description="Extra delay after navigation before starting actions (milliseconds)")
     pause_before_scroll_ms: int = Field(DEFAULT_SETTINGS["pause_before_scroll_ms"], ge=0, le=120000, description="Pause duration before starting auto-scroll (milliseconds)")
     post_scroll_pause_ms: int = Field(DEFAULT_SETTINGS["post_scroll_pause_ms"], ge=0, le=120000, description="Pause duration after scrolling completes (milliseconds)")
+    vpn_country: Optional[str] = Field(None, description="VPN country for proxy (requires vpn_city)")
+    vpn_city: Optional[str] = Field(None, description="VPN city for proxy (requires vpn_country)")
 
     @validator('url')
     def validate_url_public(cls, v):
         return _validate_url_public(v)
+    
+    @validator('vpn_city')
+    def validate_vpn_location(cls, v, values):
+        # If one VPN field is provided, both must be provided
+        if values.get('vpn_country') is not None or v is not None:
+            if values.get('vpn_country') is None or v is None:
+                raise ValueError("Both vpn_country and vpn_city must be provided together")
+        return v
 
 # --- Queue & Task Models ---
 
@@ -275,10 +386,12 @@ class TaskInfo(BaseModel):
     content_type: Optional[str] = None
     bytes_size: Optional[int] = None
 
-# In-memory task store and queue (single-process)
+# In-memory task store and queue (global, shared across all users)
+# All tasks from all users are queued here and processed sequentially
 _task_store: Dict[str, Dict] = {}
 _task_queue: Optional[asyncio.Queue] = None
 _worker_task: Optional[asyncio.Task] = None
+_queue_initialized = False
 # --- WebSocket Manager for task updates ---
 class TaskWebSocketManager:
     def __init__(self):
@@ -342,88 +455,119 @@ def _create_task(kind: TaskKind, payload: dict) -> str:
 
 # --- Background worker ---
 async def _queue_worker():
+    """
+    Global queue worker that processes tasks from all users sequentially.
+    
+    IMPORTANT: Only one instance of this worker runs at a time to ensure
+    tasks are processed one-by-one and the API is not overwhelmed.
+    """
     assert _task_queue is not None
+    log_info("[QUEUE] Sequential worker started - processing tasks one at a time from global queue")
     while True:
-        task_id = await _task_queue.get()
-        record = _task_store.get(task_id)
-        if not record:
-            _task_queue.task_done()
-            continue
-        record["status"] = "running"
-        record["started_at"] = datetime.utcnow().isoformat()
+        task_id = None
         try:
-            await ws_manager.broadcast(task_id, {
-                "task_id": task_id,
-                "kind": record["kind"],
-                "status": record["status"],
-                "started_at": record["started_at"],
-            })
-        except Exception:
-            pass
-        try:
-            kind: TaskKind = record["kind"]
-            payload = record["payload"]
-            async def progress_cb(stage: str, details: Dict | None = None):
+            task_id = await _task_queue.get()
+            queue_size = _task_queue.qsize()
+            record = _task_store.get(task_id)
+            if not record:
+                log_warning(f"[QUEUE] Task {task_id} not found in store, skipping")
+                _task_queue.task_done()
+                continue
+            
+            log_info(f"[QUEUE] Processing task {task_id} (kind: {record['kind']}, queue size: {queue_size}) - ONE TASK AT A TIME")
+            record["status"] = "running"
+            record["started_at"] = datetime.utcnow().isoformat()
+            try:
+                await ws_manager.broadcast(task_id, {
+                    "task_id": task_id,
+                    "kind": record["kind"],
+                    "status": record["status"],
+                    "started_at": record["started_at"],
+                })
+            except Exception:
+                pass
+            try:
+                kind: TaskKind = record["kind"]
+                payload = record["payload"]
+                async def progress_cb(stage: str, details: Dict | None = None):
+                    try:
+                        msg = {
+                            "task_id": task_id,
+                            "kind": record["kind"],
+                            "status": "running",
+                            "stage": stage,
+                        }
+                        if details:
+                            msg.update(details)
+                        await ws_manager.broadcast(task_id, msg)
+                    except Exception:
+                        pass
+                if kind == "screenshot":
+                    request_model = ScreenshotRequest(**payload)
+                    result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(request_model, progress_cb)
+                else:
+                    request_model = RecordingRequest(**payload)
+                    result_bytes, content_type = await _capture_raw_recording_in_new_browser(request_model, progress_cb)
+                record["result_bytes"] = result_bytes
+                record["content_type"] = content_type
+                record["status"] = "completed"
+                record["finished_at"] = datetime.utcnow().isoformat()
+                log_info(f"[QUEUE] Task {task_id} completed successfully")
                 try:
-                    msg = {
+                    await ws_manager.broadcast(task_id, {
                         "task_id": task_id,
                         "kind": record["kind"],
-                        "status": "running",
-                        "stage": stage,
-                    }
-                    if details:
-                        msg.update(details)
-                    await ws_manager.broadcast(task_id, msg)
+                        "status": record["status"],
+                        "finished_at": record["finished_at"],
+                        "content_type": content_type,
+                        "bytes_size": len(result_bytes) if result_bytes is not None else None,
+                    })
                 except Exception:
                     pass
-            if kind == "screenshot":
-                request_model = ScreenshotRequest(**payload)
-                result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(request_model, progress_cb)
-            else:
-                request_model = RecordingRequest(**payload)
-                result_bytes, content_type = await _capture_raw_recording_in_new_browser(request_model, progress_cb)
-            record["result_bytes"] = result_bytes
-            record["content_type"] = content_type
-            record["status"] = "completed"
-            record["finished_at"] = datetime.utcnow().isoformat()
-            try:
-                await ws_manager.broadcast(task_id, {
-                    "task_id": task_id,
-                    "kind": record["kind"],
-                    "status": record["status"],
-                    "finished_at": record["finished_at"],
-                    "content_type": content_type,
-                    "bytes_size": len(result_bytes) if result_bytes is not None else None,
-                })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.exception(f"Task {task_id} failed")
+                if record:
+                    record["status"] = "failed"
+                    record["error"] = str(e)
+                    record["finished_at"] = datetime.utcnow().isoformat()
+                log_error(f"[QUEUE] Task {task_id} failed: {str(e)}")
+                try:
+                    await ws_manager.broadcast(task_id, {
+                        "task_id": task_id,
+                        "kind": record["kind"] if record else "unknown",
+                        "status": "failed",
+                        "finished_at": record["finished_at"] if record else None,
+                        "error": str(e),
+                    })
+                except Exception:
+                    pass
         except Exception as e:
-            logger.exception(f"Task {task_id} failed")
-            record["status"] = "failed"
-            record["error"] = str(e)
-            record["finished_at"] = datetime.utcnow().isoformat()
-            try:
-                await ws_manager.broadcast(task_id, {
-                    "task_id": task_id,
-                    "kind": record["kind"],
-                    "status": record["status"],
-                    "finished_at": record["finished_at"],
-                    "error": record["error"],
-                })
-            except Exception:
-                pass
+            log_error(f"[QUEUE] Error in queue worker: {e}")
         finally:
-            _task_queue.task_done()
+            if task_id:
+                _task_queue.task_done()
+                remaining = _task_queue.qsize()
+                if remaining > 0:
+                    log_info(f"[QUEUE] Task {task_id} done, {remaining} tasks remaining in queue")
 
 # --- App lifecycle: start/stop worker ---
 @app.on_event("startup")
 async def _startup_queue_worker():
-    global _task_queue, _worker_task
+    global _task_queue, _worker_task, _queue_initialized
+    # Initialize global queue (shared across all users)
     if _task_queue is None:
         _task_queue = asyncio.Queue()
+        log_info("[QUEUE] Global task queue initialized")
+    
+    # Start worker if not already running
+    # IMPORTANT: Only one worker task processes tasks sequentially to avoid overwhelming the API
     if _worker_task is None or _worker_task.done():
         _worker_task = asyncio.create_task(_queue_worker())
-        log_info("Queue worker started")
+        _queue_initialized = True
+        log_info("[QUEUE] Single sequential worker started - tasks will be processed one at a time")
+    else:
+        _queue_initialized = True
+        log_warning("[QUEUE] Queue worker already running - this should not happen, only one worker is supported")
 
 @app.on_event("shutdown")
 async def _shutdown_queue_worker():
@@ -437,6 +581,150 @@ async def _shutdown_queue_worker():
         log_info("Queue worker stopped")
 
 # --- Helper Functions ---
+
+async def _get_or_create_shared_proxy(country: str, city: str) -> tuple[Optional[str], Optional[str], str]:
+    """
+    Get or create a shared gluetun proxy for the given VPN location.
+    Returns (proxy_url, container_id, location_key) where location_key should be used to release the proxy.
+    If proxy already exists, reuses it and increments ref count.
+    If proxy doesn't exist, creates a new one with ref_count=1.
+    """
+    location_key = f"{country}/{city}"
+    
+    async with _proxy_manager_lock:
+        if location_key in _shared_proxy_manager:
+            # Proxy already exists, reuse it
+            proxy_info = _shared_proxy_manager[location_key]
+            destroy_task = proxy_info.get('destroy_task')
+            if destroy_task:
+                try:
+                    destroy_task.cancel()
+                except Exception:
+                    pass
+                proxy_info['destroy_task'] = None
+                log_info(f"[VPN] Cancelled pending destroy for {location_key}; reusing shared proxy")
+            proxy_info['ref_count'] += 1
+            log_info(f"[VPN] Reusing existing shared proxy for {location_key} (ref_count={proxy_info['ref_count']})")
+            return proxy_info['proxy_url'], proxy_info['container_id'], location_key
+        else:
+            # Create new proxy
+            log_info(f"[VPN] Creating new shared proxy for {location_key}")
+            proxy_url, container_id = await _create_gluetun_proxy(country, city)
+            if not proxy_url or not container_id:
+                return None, None, None
+            
+            # Store in shared manager with ref_count=1 (first user)
+            _shared_proxy_manager[location_key] = {
+                'container_id': container_id,
+                'proxy_url': proxy_url,
+                'ref_count': 1,
+                'destroy_task': None
+            }
+            log_info(f"[VPN] Created shared proxy for {location_key} (ref_count=1)")
+            return proxy_url, container_id, location_key
+
+async def _create_gluetun_proxy(country: str, city: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Create a gluetun proxy instance via the gluetun API.
+    Returns (proxy_url, container_id) on success, (None, None) on failure.
+    
+    The proxy_url format is: http://username:password@host:port
+    We need to convert this to a format that Playwright can use from within Docker.
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{GLUETUN_API_URL}/start",
+                json={"country": country, "city": city},
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    log_warning(f"Failed to create gluetun proxy: {response.status} - {error_text}")
+                    return None, None
+                
+                data = await response.json()
+                container_id = data.get("id")
+                proxy_url = data.get("proxy")
+                
+                if not container_id or not proxy_url:
+                    log_warning(f"Invalid response from gluetun API: {data}")
+                    return None, None
+                
+                # Parse proxy URL: http://username:password@localhost:port
+                # For Docker containers, we need to access the gluetun container directly
+                # The gluetun container name is gluetun-{container_id}
+                # We need to replace localhost with the container name, but preserve credentials
+                parsed = urlparse(proxy_url)
+                container_name = f"gluetun-{container_id}"
+                
+                # Construct proxy URL accessible from Docker network
+                # Use the container name instead of localhost
+                # Port 8888 is the internal port in the gluetun container
+                # Preserve username and password from original URL
+                netloc = f"{container_name}:8888"
+                if parsed.username and parsed.password:
+                    netloc = f"{parsed.username}:{parsed.password}@{netloc}"
+                elif parsed.username:
+                    netloc = f"{parsed.username}@{netloc}"
+                
+                proxy_for_docker = urlunparse((
+                    parsed.scheme,
+                    netloc,  # Include credentials and container name
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment
+                ))
+                
+                # Parse proxy config for logging
+                proxy_config_for_log = _parse_proxy_for_playwright(proxy_for_docker)
+                log_info(f"[VPN] Created gluetun proxy: {proxy_for_docker} (container: {container_id})")
+                log_info(f"[VPN] Proxy details - Server: {proxy_config_for_log.get('server')}, Username: {proxy_config_for_log.get('username', 'None')}, Has Password: {bool(proxy_config_for_log.get('password'))}")
+                # Also log the original proxy URL for debugging
+                log_info(f"[VPN] Original proxy URL from gluetun API: {proxy_url}")
+                return proxy_for_docker, container_id
+    except asyncio.TimeoutError:
+        log_warning(f"Timeout creating gluetun proxy for {country}/{city}")
+        return None, None
+    except Exception as e:
+        log_warning(f"Error creating gluetun proxy: {e}")
+        return None, None
+
+async def _destroy_gluetun_proxy(container_id: str) -> bool:
+    """Destroy a gluetun proxy instance via the gluetun API."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{GLUETUN_API_URL}/destroy",
+                json={"id": container_id},
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    log_info(f"Destroyed gluetun proxy container: {container_id}")
+                    return True
+                else:
+                    error_text = await response.text()
+                    log_warning(f"Failed to destroy gluetun proxy {container_id}: {response.status} - {error_text}")
+                    return False
+    except Exception as e:
+        log_warning(f"Error destroying gluetun proxy {container_id}: {e}")
+        return False
+
+def _parse_proxy_for_playwright(proxy_url: str) -> Dict[str, str]:
+    """
+    Parse proxy URL (http://user:pass@host:port) into Playwright proxy format.
+    Returns dict with 'server' and optionally 'username' and 'password'.
+    """
+    parsed = urlparse(proxy_url)
+    proxy_dict = {
+        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 8888}"
+    }
+    if parsed.username:
+        proxy_dict["username"] = parsed.username
+    if parsed.password:
+        proxy_dict["password"] = parsed.password
+    return proxy_dict
 
 async def _scroll_to_end(page: Page, scroll_speed: int, direction: str = "down", hard_deadline_ms: Optional[int] = None):
     """Scrolls until the end of the page is reached in the given direction.
@@ -499,6 +787,26 @@ async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
 async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a video in a new browser instance."""
     display = None
+    gluetun_container_id = None
+    proxy_url = None
+    proxy_location_key = None
+    
+    # Get or create shared gluetun proxy if VPN location is provided
+    if request_model.vpn_country and request_model.vpn_city:
+        if progress_cb:
+            try:
+                await progress_cb("creating_proxy", {"country": request_model.vpn_country, "city": request_model.vpn_city})
+            except Exception:
+                pass
+        proxy_url, gluetun_container_id, proxy_location_key = await _get_or_create_shared_proxy(request_model.vpn_country, request_model.vpn_city)
+        if not proxy_url or not proxy_location_key:
+            raise Exception(f"Failed to create gluetun proxy for {request_model.vpn_country}/{request_model.vpn_city}")
+        if progress_cb:
+            try:
+                await progress_cb("proxy_created", {})
+            except Exception:
+                pass
+    
     if not request_model.headless:
         log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
         display = Display(visible=0, size=(request_model.viewport_width, request_model.viewport_height))
@@ -517,18 +825,89 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                 }
                 if request_model.user_agent:
                     context_options['user_agent'] = request_model.user_agent
+                
+                # Add proxy configuration if VPN is used
+                if gluetun_container_id and proxy_url:
+                    proxy_config = _parse_proxy_for_playwright(proxy_url)
+                    context_options['proxy'] = proxy_config
+                    log_info(f"[VPN-RECORD] Using proxy: {proxy_config.get('server')} for URL: {request_model.url}")
+                    log_info(f"[VPN-RECORD] Proxy container ID: {gluetun_container_id}")
+                    log_info(f"[VPN-RECORD] Navigation timeout set to: {request_model.wait_timeout}ms")
                     
                 context = await browser.new_context(**context_options)
                 page = await context.new_page()
                 
+                # Add request/response logging for VPN debugging
+                if gluetun_container_id and proxy_url:
+                    async def handle_request(request):
+                        log_info(f"[VPN-RECORD] Request started: {request.method} {request.url}")
+                    async def handle_response(response):
+                        log_info(f"[VPN-RECORD] Response received: {response.status} {response.url}")
+                    page.on("request", handle_request)
+                    page.on("response", handle_response)
+                
+                # Debug: Check IP address when using VPN proxy
+                if gluetun_container_id and proxy_url:
+                    try:
+                        log_info(f"[VPN-RECORD] Verifying proxy connection by checking IP address...")
+                        log_info(f"[VPN-RECORD] Using proxy URL for IP check: {proxy_url}")
+                        ip_check_start = time.time()
+                        
+                        # Use aiohttp to make direct HTTP request through proxy (curl-like)
+                        # For aiohttp, proxy URL should include credentials: http://user:pass@host:port
+                        # The proxy_url already has this format from gluetun API
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "https://showmethisip.com/api",
+                                proxy=proxy_url,  # Use full proxy URL with credentials
+                                timeout=aiohttp.ClientTimeout(total=30)
+                            ) as response:
+                                if response.status == 200:
+                                    ip_data = await response.json()
+                                    ip_check_time = (time.time() - ip_check_start) * 1000
+                                    log_info(f"[VPN-RECORD] IP check completed in {ip_check_time:.2f}ms")
+                                    log_info(f"[VPN-RECORD] IP Address Response: {json.dumps(ip_data, indent=2)}")
+                                else:
+                                    ip_check_time = (time.time() - ip_check_start) * 1000
+                                    error_text = await response.text()
+                                    log_warning(f"[VPN-RECORD] IP check completed in {ip_check_time:.2f}ms but got status {response.status}: {error_text[:200]}")
+                    except asyncio.TimeoutError:
+                        ip_check_time = (time.time() - ip_check_start) * 1000
+                        log_error(f"[VPN-RECORD] IP check timed out after {ip_check_time:.2f}ms")
+                    except Exception as ip_check_error:
+                        ip_check_time = (time.time() - ip_check_start) * 1000
+                        log_error(f"[VPN-RECORD] IP check failed after {ip_check_time:.2f}ms: {type(ip_check_error).__name__}: {str(ip_check_error)}")
+                        # Don't fail the whole request if IP check fails, just log it
+                
                 video_path = None
+                use_stealth_fallback = False  # Track if we're using stealth browser fallback
                 try:
                     if progress_cb:
                         try:
                             await progress_cb("navigating", {"url": request_model.url})
                         except Exception:
                             pass
-                    await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                    
+                    navigation_start = time.time()
+                    log_info(f"[VPN-RECORD] Starting navigation to {request_model.url} (wait_until={request_model.wait_until}, timeout={request_model.wait_timeout}ms)")
+                    try:
+                        await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                        navigation_time = (time.time() - navigation_start) * 1000
+                        log_info(f"[VPN-RECORD] Navigation completed successfully in {navigation_time:.2f}ms")
+                    except Exception as nav_error:
+                        navigation_time = (time.time() - navigation_start) * 1000
+                        error_type = type(nav_error).__name__
+                        log_error(f"[VPN-RECORD] Navigation failed after {navigation_time:.2f}ms: {error_type}: {str(nav_error)}")
+                        if "timeout" in str(nav_error).lower() or "TimeoutError" in error_type:
+                            log_error(f"[VPN-RECORD] TIMEOUT DETAILS - URL: {request_model.url}, Proxy: {proxy_url if proxy_url else 'None'}, Timeout: {request_model.wait_timeout}ms")
+                            # Try to get page state for debugging
+                            try:
+                                page_url = page.url
+                                page_title = await page.title()
+                                log_error(f"[VPN-RECORD] Page state at timeout - URL: {page_url}, Title: {page_title}")
+                            except Exception:
+                                log_error(f"[VPN-RECORD] Could not retrieve page state after timeout")
+                        raise
                     if progress_cb:
                         try:
                             await progress_cb("navigated", {"url": request_model.url})
@@ -537,104 +916,188 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                     if await _page_contains_turnstile(page):
                         snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
                         log_info(f"Turnstile indicators present (recording). Body snippet: {snippet[:300].replace('\n',' ')}...")
+                    
                     # Optional Stealth Browser fallback
-                    if await _page_contains_turnstile(page):
+                    # If fallback is needed, we need to keep the browser open for the entire recording process
+                    use_stealth_fallback = await _page_contains_turnstile(page) and request_model.camoufox_fallback
+                    
+                    if use_stealth_fallback:
                         if progress_cb:
                             try:
                                 await progress_cb("fallback_retry", {"reason": "turnstile_detected"})
                             except Exception:
                                 pass
-                        log_info(
-                            f"Turnstile detected for recording {request_model.url}; retrying with Stealth Browser"
-                            if request_model.camoufox_fallback else
-                            f"Turnstile detected for recording {request_model.url}; fallback disabled"
-                        )
+                        log_info(f"Turnstile detected for recording {request_model.url}; retrying with Stealth Browser")
                         await context.close()
                         await browser.close()
-                        if request_model.camoufox_fallback:
-                            async with _launch_maybe_camoufox(request_model.headless) as cf_browser:
-                                cf_context = await cf_browser.new_context(viewport={'width': request_model.viewport_width, 'height': request_model.viewport_height},
-                                                                         record_video_dir=temp_dir,
-                                                                         record_video_size={'width': request_model.viewport_width, 'height': request_model.viewport_height})
-                                page = await cf_context.new_page()
-                                await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                        
+                        # Use stealth browser for entire recording process - keep browser open until recording completes
+                        async with _launch_maybe_camoufox(request_model.headless) as cf_browser:
+                            cf_context_opts = {
+                                'viewport': {'width': request_model.viewport_width, 'height': request_model.viewport_height},
+                                'record_video_dir': temp_dir,
+                                'record_video_size': {'width': request_model.viewport_width, 'height': request_model.viewport_height}
+                            }
+                            if request_model.user_agent:
+                                cf_context_opts['user_agent'] = request_model.user_agent
+                            
+                            # Add proxy configuration if VPN is used
+                            if gluetun_container_id and proxy_url:
+                                proxy_config = _parse_proxy_for_playwright(proxy_url)
+                                cf_context_opts['proxy'] = proxy_config
+                                log_info(f"[VPN-FALLBACK] Using proxy: {proxy_config.get('server')} for fallback recording")
+                            
+                            cf_context = await cf_browser.new_context(**cf_context_opts)
+                            page = await cf_context.new_page()
+                            
+                            # Navigate with stealth browser
+                            await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("fallback_success", {})
+                                except Exception:
+                                    pass
+                            log_info(f"Stealth Browser navigation successful for recording {request_model.url}")
+                            
+                            # Optional pre-record wait for background resources
+                            if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
                                 if progress_cb:
                                     try:
-                                        await progress_cb("fallback_success", {})
+                                        await progress_cb("pre_record_wait_start", {"ms": request_model.pre_record_wait_ms})
                                     except Exception:
                                         pass
-                                log_info(f"Stealth Browser navigation successful for recording {request_model.url}")
-                    
-                    # Optional pre-record wait for background resources
-                    if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
-                        if progress_cb:
-                            try:
-                                await progress_cb("pre_record_wait_start", {"ms": request_model.pre_record_wait_ms})
-                            except Exception:
-                                pass
-                        await page.wait_for_timeout(request_model.pre_record_wait_ms)
-                        if progress_cb:
-                            try:
-                                await progress_cb("pre_record_wait_done", {})
-                            except Exception:
-                                pass
+                                await page.wait_for_timeout(request_model.pre_record_wait_ms)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("pre_record_wait_done", {})
+                                    except Exception:
+                                        pass
 
-                    # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
-                    # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
-                    # for post-scroll waiting. When auto-scroll is disabled, we use record_duration.
-                    if request_model.scroll_enabled:
-                        # Optional explicit pause before starting scroll sequence
-                        if request_model.pause_before_scroll_ms and request_model.pause_before_scroll_ms > 0:
-                            if progress_cb:
-                                try:
-                                    await progress_cb("pause_before_scroll_start", {"ms": request_model.pause_before_scroll_ms})
-                                except Exception:
-                                    pass
-                            await page.wait_for_timeout(request_model.pause_before_scroll_ms)
-                            if progress_cb:
-                                try:
-                                    await progress_cb("pause_before_scroll_done", {})
-                                except Exception:
-                                    pass
-                        if progress_cb:
+                            # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
+                            # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
+                            # for post-scroll waiting. When auto-scroll is disabled, we use record_duration.
+                            if request_model.scroll_enabled:
+                                # Optional explicit pause before starting scroll sequence
+                                if request_model.pause_before_scroll_ms and request_model.pause_before_scroll_ms > 0:
+                                    if progress_cb:
+                                        try:
+                                            await progress_cb("pause_before_scroll_start", {"ms": request_model.pause_before_scroll_ms})
+                                        except Exception:
+                                            pass
+                                    await page.wait_for_timeout(request_model.pause_before_scroll_ms)
+                                    if progress_cb:
+                                        try:
+                                            await progress_cb("pause_before_scroll_done", {})
+                                        except Exception:
+                                            pass
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("scrolling_start", {"infinite_cap_s": 30, "speed": request_model.scroll_speed})
+                                    except Exception:
+                                        pass
+                                await _perform_scroll_sequence(page, request_model)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("scrolling_done", {})
+                                    except Exception:
+                                        pass
+                                # Post-scroll pause (milliseconds)
+                                if request_model.post_scroll_pause_ms and request_model.post_scroll_pause_ms > 0:
+                                    if progress_cb:
+                                        try:
+                                            await progress_cb("post_scroll_pause_start", {"ms": request_model.post_scroll_pause_ms})
+                                        except Exception:
+                                            pass
+                                    await page.wait_for_timeout(request_model.post_scroll_pause_ms)
+                                    if progress_cb:
+                                        try:
+                                            await progress_cb("post_scroll_pause_done", {})
+                                        except Exception:
+                                            pass
+                            else:
+                                await asyncio.sleep(request_model.record_duration)
+                            
+                            # Get video path before context closes
                             try:
-                                await progress_cb("scrolling_start", {"infinite_cap_s": 30, "speed": request_model.scroll_speed})
+                                if page.video:
+                                    video_path = await page.video.path()
                             except Exception:
                                 pass
-                        await _perform_scroll_sequence(page, request_model)
-                        if progress_cb:
-                            try:
-                                await progress_cb("scrolling_done", {})
-                            except Exception:
-                                pass
-                        # Post-scroll pause (milliseconds)
-                        if request_model.post_scroll_pause_ms and request_model.post_scroll_pause_ms > 0:
-                            if progress_cb:
-                                try:
-                                    await progress_cb("post_scroll_pause_start", {"ms": request_model.post_scroll_pause_ms})
-                                except Exception:
-                                    pass
-                            await page.wait_for_timeout(request_model.post_scroll_pause_ms)
-                            if progress_cb:
-                                try:
-                                    await progress_cb("post_scroll_pause_done", {})
-                                except Exception:
-                                    pass
+                            # Context and browser will be closed by context manager
                     else:
-                        await asyncio.sleep(request_model.record_duration)
+                        # No fallback needed - use regular browser flow
+                        # Optional pre-record wait for background resources
+                        if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
+                            if progress_cb:
+                                try:
+                                    await progress_cb("pre_record_wait_start", {"ms": request_model.pre_record_wait_ms})
+                                except Exception:
+                                    pass
+                            await page.wait_for_timeout(request_model.pre_record_wait_ms)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("pre_record_wait_done", {})
+                                except Exception:
+                                    pass
+
+                        # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
+                        # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
+                        # for post-scroll waiting. When auto-scroll is disabled, we use record_duration.
+                        if request_model.scroll_enabled:
+                            # Optional explicit pause before starting scroll sequence
+                            if request_model.pause_before_scroll_ms and request_model.pause_before_scroll_ms > 0:
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("pause_before_scroll_start", {"ms": request_model.pause_before_scroll_ms})
+                                    except Exception:
+                                        pass
+                                await page.wait_for_timeout(request_model.pause_before_scroll_ms)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("pause_before_scroll_done", {})
+                                    except Exception:
+                                        pass
+                            if progress_cb:
+                                try:
+                                    await progress_cb("scrolling_start", {"infinite_cap_s": 30, "speed": request_model.scroll_speed})
+                                except Exception:
+                                    pass
+                            await _perform_scroll_sequence(page, request_model)
+                            if progress_cb:
+                                try:
+                                    await progress_cb("scrolling_done", {})
+                                except Exception:
+                                    pass
+                            # Post-scroll pause (milliseconds)
+                            if request_model.post_scroll_pause_ms and request_model.post_scroll_pause_ms > 0:
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("post_scroll_pause_start", {"ms": request_model.post_scroll_pause_ms})
+                                    except Exception:
+                                        pass
+                                await page.wait_for_timeout(request_model.post_scroll_pause_ms)
+                                if progress_cb:
+                                    try:
+                                        await progress_cb("post_scroll_pause_done", {})
+                                    except Exception:
+                                        pass
+                        else:
+                            await asyncio.sleep(request_model.record_duration)
                     
                 finally:
-                    try:
-                        if page.video:
-                            video_path = await page.video.path()
-                    except Exception:
-                        pass
-                    for obj in (context, browser):
+                    # Only close browser/context if we didn't use stealth fallback (stealth browser closes automatically)
+                    if not use_stealth_fallback:
                         try:
-                            await obj.close()
+                            if page.video:
+                                video_path = await page.video.path()
                         except Exception:
                             pass
-                    # cf_browser/context are closed by context manager
+                        for obj in (context, browser):
+                            try:
+                                await obj.close()
+                            except Exception:
+                                pass
+                    # For stealth fallback, video_path is already set and browser closes via context manager
             
             if video_path and Path(video_path).exists():
                 if progress_cb:
@@ -652,6 +1115,13 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
             else:
                 raise FileNotFoundError("Video file was not created.")
     finally:
+        # Release shared proxy (will decrement ref count and destroy if needed)
+        if proxy_location_key:
+            try:
+                await _release_shared_proxy(proxy_location_key)
+            except Exception as e:
+                log_warning(f"Error releasing shared proxy: {e}")
+        
         if display:
             log_info("Stopping virtual display.")
             display.stop()
@@ -659,6 +1129,26 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
 async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a screenshot in a new browser instance."""
     display = None
+    gluetun_container_id = None
+    proxy_url = None
+    proxy_location_key = None
+    
+    # Get or create shared gluetun proxy if VPN location is provided
+    if request_model.vpn_country and request_model.vpn_city:
+        if progress_cb:
+            try:
+                await progress_cb("creating_proxy", {"country": request_model.vpn_country, "city": request_model.vpn_city})
+            except Exception:
+                pass
+        proxy_url, gluetun_container_id, proxy_location_key = await _get_or_create_shared_proxy(request_model.vpn_country, request_model.vpn_city)
+        if not proxy_url or not proxy_location_key:
+            raise Exception(f"Failed to create gluetun proxy for {request_model.vpn_country}/{request_model.vpn_city}")
+        if progress_cb:
+            try:
+                await progress_cb("proxy_created", {})
+            except Exception:
+                pass
+    
     if not request_model.headless:
         log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
         display = Display(visible=0, size=(request_model.viewport_width, request_model.viewport_height))
@@ -676,8 +1166,58 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
             if request_model.user_agent:
                 context_options['user_agent'] = request_model.user_agent
             
+            # Add proxy configuration if VPN is used
+            if gluetun_container_id and proxy_url:
+                proxy_config = _parse_proxy_for_playwright(proxy_url)
+                context_options['proxy'] = proxy_config
+                log_info(f"[VPN] Using proxy: {proxy_config.get('server')} for URL: {request_model.url}")
+                log_info(f"[VPN] Proxy container ID: {gluetun_container_id}")
+                log_info(f"[VPN] Navigation timeout set to: {request_model.wait_timeout}ms")
+            
             context = await browser.new_context(**context_options)
             page = await context.new_page()
+            
+            # Add request/response logging for VPN debugging
+            if gluetun_container_id and proxy_url:
+                async def handle_request(request):
+                    log_info(f"[VPN] Request started: {request.method} {request.url}")
+                async def handle_response(response):
+                    log_info(f"[VPN] Response received: {response.status} {response.url}")
+                page.on("request", handle_request)
+                page.on("response", handle_response)
+            
+            # Debug: Check IP address when using VPN proxy
+            if gluetun_container_id and proxy_url:
+                try:
+                    log_info(f"[VPN] Verifying proxy connection by checking IP address...")
+                    log_info(f"[VPN] Using proxy URL for IP check: {proxy_url}")
+                    ip_check_start = time.time()
+                    
+                    # Use aiohttp to make direct HTTP request through proxy (curl-like)
+                    # For aiohttp, proxy URL should include credentials: http://user:pass@host:port
+                    # The proxy_url already has this format from gluetun API
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://showmethisip.com/api",
+                            proxy=proxy_url,  # Use full proxy URL with credentials
+                            timeout=aiohttp.ClientTimeout(total=30)
+                        ) as response:
+                            if response.status == 200:
+                                ip_data = await response.json()
+                                ip_check_time = (time.time() - ip_check_start) * 1000
+                                log_info(f"[VPN] IP check completed in {ip_check_time:.2f}ms")
+                                log_info(f"[VPN] IP Address Response: {json.dumps(ip_data, indent=2)}")
+                            else:
+                                ip_check_time = (time.time() - ip_check_start) * 1000
+                                error_text = await response.text()
+                                log_warning(f"[VPN] IP check completed in {ip_check_time:.2f}ms but got status {response.status}: {error_text[:200]}")
+                except asyncio.TimeoutError:
+                    ip_check_time = (time.time() - ip_check_start) * 1000
+                    log_error(f"[VPN] IP check timed out after {ip_check_time:.2f}ms")
+                except Exception as ip_check_error:
+                    ip_check_time = (time.time() - ip_check_start) * 1000
+                    log_error(f"[VPN] IP check failed after {ip_check_time:.2f}ms: {type(ip_check_error).__name__}: {str(ip_check_error)}")
+                    # Don't fail the whole request if IP check fails, just log it
             
             try:
                 if progress_cb:
@@ -685,7 +1225,27 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                         await progress_cb("navigating", {"url": request_model.url})
                     except Exception:
                         pass
-                await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                
+                navigation_start = time.time()
+                log_info(f"[VPN] Starting navigation to {request_model.url} (wait_until={request_model.wait_until}, timeout={request_model.wait_timeout}ms)")
+                try:
+                    await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                    navigation_time = (time.time() - navigation_start) * 1000
+                    log_info(f"[VPN] Navigation completed successfully in {navigation_time:.2f}ms")
+                except Exception as nav_error:
+                    navigation_time = (time.time() - navigation_start) * 1000
+                    error_type = type(nav_error).__name__
+                    log_error(f"[VPN] Navigation failed after {navigation_time:.2f}ms: {error_type}: {str(nav_error)}")
+                    if "timeout" in str(nav_error).lower() or "TimeoutError" in error_type:
+                        log_error(f"[VPN] TIMEOUT DETAILS - URL: {request_model.url}, Proxy: {proxy_url if proxy_url else 'None'}, Timeout: {request_model.wait_timeout}ms")
+                        # Try to get page state for debugging
+                        try:
+                            page_url = page.url
+                            page_title = await page.title()
+                            log_error(f"[VPN] Page state at timeout - URL: {page_url}, Title: {page_title}")
+                        except Exception:
+                            log_error(f"[VPN] Could not retrieve page state after timeout")
+                    raise
                 if progress_cb:
                     try:
                         await progress_cb("navigated", {"url": request_model.url})
@@ -718,9 +1278,27 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                                 cf_context_opts['user_agent'] = CAMOUFOX_DEFAULT_UA
                             elif request_model.user_agent:
                                 cf_context_opts['user_agent'] = request_model.user_agent
+                            
+                            # Add proxy configuration if VPN is used
+                            if gluetun_container_id and proxy_url:
+                                proxy_config = _parse_proxy_for_playwright(proxy_url)
+                                cf_context_opts['proxy'] = proxy_config
+                                log_info(f"[VPN-FALLBACK] Using proxy: {proxy_config.get('server')} for fallback navigation")
+                            
                             cf_context = await cf_browser.new_context(**cf_context_opts)
                             page = await cf_context.new_page()
-                            await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                            
+                            fallback_nav_start = time.time()
+                            log_info(f"[VPN-FALLBACK] Starting fallback navigation to {request_model.url} (timeout={request_model.wait_timeout}ms)")
+                            try:
+                                await page.goto(request_model.url, wait_until=request_model.wait_until, timeout=request_model.wait_timeout)
+                                fallback_nav_time = (time.time() - fallback_nav_start) * 1000
+                                log_info(f"[VPN-FALLBACK] Fallback navigation completed in {fallback_nav_time:.2f}ms")
+                            except Exception as fallback_error:
+                                fallback_nav_time = (time.time() - fallback_nav_start) * 1000
+                                error_type = type(fallback_error).__name__
+                                log_error(f"[VPN-FALLBACK] Fallback navigation failed after {fallback_nav_time:.2f}ms: {error_type}: {str(fallback_error)}")
+                                raise
                             if await _page_contains_turnstile(page):
                                 log_info("Turnstile still present after Stealth Browser retry")
                                 if progress_cb:
@@ -743,7 +1321,16 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                                         await progress_cb("waiting_for_selector", {"selector": request_model.wait_for_selector})
                                     except Exception:
                                         pass
-                                await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                                selector_start = time.time()
+                                log_info(f"[VPN-FALLBACK] Waiting for selector: {request_model.wait_for_selector} (timeout={request_model.wait_timeout}ms)")
+                                try:
+                                    await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                                    selector_time = (time.time() - selector_start) * 1000
+                                    log_info(f"[VPN-FALLBACK] Selector found after {selector_time:.2f}ms")
+                                except Exception as selector_error:
+                                    selector_time = (time.time() - selector_start) * 1000
+                                    log_error(f"[VPN-FALLBACK] Selector wait failed after {selector_time:.2f}ms: {str(selector_error)}")
+                                    raise
                                 if progress_cb:
                                     try:
                                         await progress_cb("selector_ready", {"selector": request_model.wait_for_selector})
@@ -781,7 +1368,17 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                             await progress_cb("waiting_for_selector", {"selector": request_model.wait_for_selector})
                         except Exception:
                             pass
-                    await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                    selector_start = time.time()
+                    vpn_prefix = "[VPN]" if (gluetun_container_id and proxy_url) else ""
+                    log_info(f"{vpn_prefix} Waiting for selector: {request_model.wait_for_selector} (timeout={request_model.wait_timeout}ms)")
+                    try:
+                        await page.wait_for_selector(request_model.wait_for_selector, timeout=request_model.wait_timeout)
+                        selector_time = (time.time() - selector_start) * 1000
+                        log_info(f"{vpn_prefix} Selector found after {selector_time:.2f}ms")
+                    except Exception as selector_error:
+                        selector_time = (time.time() - selector_start) * 1000
+                        log_error(f"{vpn_prefix} Selector wait failed after {selector_time:.2f}ms: {str(selector_error)}")
+                        raise
                     if progress_cb:
                         try:
                             await progress_cb("selector_ready", {"selector": request_model.wait_for_selector})
@@ -833,6 +1430,13 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
         content_type = f"image/{request_model.image_type}"
         return screenshot_buffer, content_type
     finally:
+        # Release shared proxy (will decrement ref count and destroy if needed)
+        if proxy_location_key:
+            try:
+                await _release_shared_proxy(proxy_location_key)
+            except Exception as e:
+                log_warning(f"Error releasing shared proxy: {e}")
+        
         if display:
             log_info("Stopping virtual display.")
             display.stop()
@@ -856,18 +1460,38 @@ api_router = APIRouter()
 # Enqueue endpoints (non-blocking)
 @api_router.post("/queue/screenshot")
 async def enqueue_screenshot(request: ScreenshotRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
+    global _task_queue, _queue_initialized
+    
+    # Ensure queue is initialized (fallback if startup event hasn't fired yet)
     if _task_queue is None:
-        raise HTTPException(status_code=503, detail="Queue not initialized")
+        _task_queue = asyncio.Queue()
+        log_warning("[QUEUE] Queue was None, initializing now (startup event may not have fired)")
+    
+    if not _queue_initialized:
+        raise HTTPException(status_code=503, detail="Queue worker not initialized")
+    
     task_id = _create_task("screenshot", request.dict())
     await _task_queue.put(task_id)
+    queue_size = _task_queue.qsize()
+    log_info(f"[QUEUE] Enqueued screenshot task {task_id} (queue size: {queue_size})")
     return {"task_id": task_id, "status": "queued"}
 
 @api_router.post("/queue/record")
 async def enqueue_record(request: RecordingRequest, _auth=Depends(require_api_key), _rl=Depends(rate_limit)):
+    global _task_queue, _queue_initialized
+    
+    # Ensure queue is initialized (fallback if startup event hasn't fired yet)
     if _task_queue is None:
-        raise HTTPException(status_code=503, detail="Queue not initialized")
+        _task_queue = asyncio.Queue()
+        log_warning("[QUEUE] Queue was None, initializing now (startup event may not have fired)")
+    
+    if not _queue_initialized:
+        raise HTTPException(status_code=503, detail="Queue worker not initialized")
+    
     task_id = _create_task("record", request.dict())
     await _task_queue.put(task_id)
+    queue_size = _task_queue.qsize()
+    log_info(f"[QUEUE] Enqueued recording task {task_id} (queue size: {queue_size})")
     return {"task_id": task_id, "status": "queued"}
 
 # Poll status

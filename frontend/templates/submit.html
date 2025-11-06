@@ -102,6 +102,42 @@
                     </div>
                 </div>
 
+                <!-- VPN Location Selection -->
+                <div class="mb-6 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
+                    <label class="block text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                        <span class="text-xl mr-2">🌍</span>
+                        VPN Location (Optional)
+                    </label>
+                    <p class="text-xs text-gray-600 mb-4">Select a VPN server location for your request. If not specified, the default location will be used.</p>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Country</label>
+                            <select id="vpnCountry" name="vpn_country" class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition text-base bg-white">
+                                <option value="">Select a country...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">City</label>
+                            <select id="vpnCity" name="vpn_city" class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition text-base bg-white" disabled>
+                                <option value="">Select a country first...</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div id="locationLoading" class="hidden mt-3 text-sm text-gray-600 flex items-center">
+                        <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Loading locations...
+                    </div>
+                    
+                    <div id="locationError" class="hidden mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                        <span class="font-medium">⚠️</span> <span id="locationErrorText"></span>
+                    </div>
+                </div>
+
                 <!-- Quick Setup Presets -->
                 <div class="mb-6">
                     <label class="block text-sm font-semibold text-gray-900 mb-3">Quick Setup</label>
@@ -458,6 +494,12 @@
 
 {% block scripts %}
 <script>
+    // Configuration
+    const GLUETUN_API_URL = '{{ gluetun_api_url }}';
+    
+    // Location data
+    let locationsData = null;
+    
     // DOM Elements
     const form = document.getElementById('taskForm');
     const taskTypeCheckboxes = document.querySelectorAll('.task-type-checkbox');
@@ -547,6 +589,69 @@
     if (stealthCheckbox && browserType) {
         updateBrowserTypeLock();
         stealthCheckbox.addEventListener('change', updateBrowserTypeLock);
+    }
+    
+    // Load locations from gluetun-api
+    async function loadLocations() {
+        if (!vpnCountry || !vpnCity) return;
+        
+        locationLoading.classList.remove('hidden');
+        locationError.classList.add('hidden');
+        
+        try {
+            const response = await fetch(`${GLUETUN_API_URL}/locations`);
+            if (!response.ok) {
+                throw new Error(`Failed to load locations: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            locationsData = data;
+            
+            // Populate country dropdown
+            vpnCountry.innerHTML = '<option value="">Select a country...</option>';
+            if (data.countries && data.countries.length > 0) {
+                data.countries.forEach(country => {
+                    const option = document.createElement('option');
+                    option.value = country.name;
+                    option.textContent = `${country.name} (${country.city_count} cities, ${country.total_servers} servers)`;
+                    vpnCountry.appendChild(option);
+                });
+            }
+            
+            locationLoading.classList.add('hidden');
+        } catch (error) {
+            console.error('Error loading locations:', error);
+            locationLoading.classList.add('hidden');
+            locationError.classList.remove('hidden');
+            locationErrorText.textContent = `Could not load VPN locations: ${error.message}. You can still proceed without selecting a location.`;
+        }
+    }
+    
+    // Update city dropdown when country is selected
+    function updateCities() {
+        if (!vpnCity || !locationsData) return;
+        
+        const selectedCountry = vpnCountry.value;
+        vpnCity.innerHTML = '<option value="">Select a city...</option>';
+        vpnCity.disabled = !selectedCountry;
+        
+        if (!selectedCountry) return;
+        
+        const country = locationsData.countries.find(c => c.name === selectedCountry);
+        if (country && country.cities) {
+            country.cities.forEach(city => {
+                const option = document.createElement('option');
+                option.value = city.name;
+                option.textContent = `${city.name} (${city.server_count} server${city.server_count !== 1 ? 's' : ''})`;
+                vpnCity.appendChild(option);
+            });
+        }
+    }
+    
+    // Initialize location selection
+    if (vpnCountry && vpnCity) {
+        loadLocations();
+        vpnCountry.addEventListener('change', updateCities);
     }
 
     // Step Navigation
@@ -780,6 +885,17 @@
                     payload[key] = value;
                 }
             }
+        }
+        
+        // Add VPN location if selected
+        const selectedCountry = vpnCountry ? vpnCountry.value : '';
+        const selectedCity = vpnCity ? vpnCity.value : '';
+        if (selectedCountry && selectedCity) {
+            payload['vpn_country'] = selectedCountry;
+            payload['vpn_city'] = selectedCity;
+        } else if (selectedCountry) {
+            // Only country selected, still include it
+            payload['vpn_country'] = selectedCountry;
         }
 
         // Validation: clip fields

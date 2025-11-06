@@ -7,8 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Create docker group with matching GID from host (1001)
+RUN groupadd -g 1001 docker
+
 # Create non-root user
-RUN groupadd -r app && useradd -r -g app -d /home/app app && \
+RUN groupadd -r app && useradd -r -g app -G docker -d /home/app app && \
     mkdir -p /home/app/.cache && chown -R app:app /home/app
 
 # System deps
