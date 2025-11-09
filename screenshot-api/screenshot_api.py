@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException, Query, APIRouter, Body, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel, Field, validator
-from typing import Optional, Literal, Dict, Callable, Awaitable
+from typing import Optional, Literal, Dict, Callable, Awaitable, Any
 import asyncio
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 from camoufox.async_api import AsyncCamoufox
 import base64
 import logging
@@ -91,8 +91,134 @@ DEFAULT_SETTINGS = {
     "post_wait_ms": 1500,
     "pre_record_wait_ms": 1000, 
     "pause_before_scroll_ms": 0,
-    "post_scroll_pause_ms": 0
+    "post_scroll_pause_ms": 0,
+    "dismiss_popups": True
 }
+
+POPUP_CLOSE_TEXT_PATTERNS = (
+    re.compile(r"\\bclose\\b", re.I),
+    re.compile(r"\\bdismiss\\b", re.I),
+    re.compile(r"\\bno,? thanks\\b", re.I),
+    re.compile(r"\\bno thanks\\b", re.I),
+    re.compile(r"\\bgot it\\b", re.I),
+    re.compile(r"\\baccept\\b", re.I),
+    re.compile(r"\\bi agree\\b", re.I),
+    re.compile(r"\\bcontinue\\b", re.I),
+    re.compile(r"\\ballow\\b", re.I),
+    re.compile(r"\\bok\\b", re.I),
+)
+
+POPUP_CLICKABLE_SELECTORS = (
+    '[aria-label*="close" i]',
+    '[aria-label*="dismiss" i]',
+    '[aria-label*="no thanks" i]',
+    '[data-testid*="close" i]',
+    '[data-testid*="dismiss" i]',
+    '[data-test*="close" i]',
+    '[data-test*="dismiss" i]',
+    '[class*="close-button" i]',
+    '[class*="close-icon" i]',
+    '[class*="close-btn" i]',
+    '[class*="modal-close" i]',
+    '[class*="popup-close" i]',
+    '[class*="paywall-close" i]',
+    '[id*="close" i]',
+    '[id*="dismiss" i]',
+    '[role="button"][id*="close" i]',
+    '[role="button"][class*="close" i]',
+    'button:has-text("×")',
+    'button:has-text("✕")',
+    'button:has-text("✖")',
+    'button:has-text("Skip")',
+)
+
+POPUP_OVERLAY_KEYWORDS = (
+    "ad blocker",
+    "subscribe",
+    "subscription",
+    "sign up",
+    "sign in",
+    "log in",
+    "cookie",
+    "privacy",
+    "consent",
+    "gdpr",
+    "newsletter",
+    "we value your",
+    "support us",
+    "keep reading",
+    "continue reading",
+    "disable your ad blocker",
+)
+
+POPUP_REMOVAL_JS = """
+(selList, keywords) => {
+  const normalizedKeywords = (keywords || []).map(k => (k || '').toLowerCase());
+  const matchesKeyword = (el) => {
+    const text = (el.innerText || '').toLowerCase();
+    if (!text) return false;
+    return normalizedKeywords.some((keyword) => keyword && text.includes(keyword));
+  };
+  const matchesSelectorList = (el) => {
+    if (!selList || !selList.length) return false;
+    return selList.some((sel) => {
+      try {
+        return el.matches(sel);
+      } catch (error) {
+        return false;
+      }
+    });
+  };
+  const asString = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value.baseVal === 'string') return value.baseVal;
+    return String(value);
+  };
+  const viewW = window.innerWidth || document.documentElement.clientWidth || 1920;
+  const viewH = window.innerHeight || document.documentElement.clientHeight || 1080;
+  let removed = 0;
+
+  const shouldRemove = (el) => {
+    if (!el || el === document.body) return false;
+    const style = window.getComputedStyle(el);
+    if (!style) return false;
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const position = style.position;
+    const zIndex = parseFloat(style.zIndex || '0');
+    if (!['fixed', 'sticky'].includes(position) && zIndex < 30 && !matchesSelectorList(el)) return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return false;
+    const className = asString(el.className).toLowerCase();
+    const id = asString(el.id).toLowerCase();
+    const label = `${className} ${id}`;
+    const coversMajority = rect.width >= viewW * 0.6 || rect.height >= viewH * 0.4;
+    const isLargeBar = rect.width >= viewW * 0.6 && rect.height >= viewH * 0.15;
+    const keywordHit = matchesKeyword(el);
+    const labelHit = /modal|overlay|popup|interstitial|newsletter|subscribe|paywall|cookie|gdpr|consent|adblock/i.test(label);
+    if (keywordHit || labelHit) return true;
+    if (matchesSelectorList(el) && (coversMajority || keywordHit)) return true;
+    if (coversMajority && (['fixed', 'sticky'].includes(position) || zIndex >= 10)) return true;
+    if (isLargeBar) return true;
+    return false;
+  };
+
+  const candidates = Array.from(document.body.querySelectorAll('*')).filter((el) => shouldRemove(el));
+  const capped = candidates.slice(0, 20);
+  capped.forEach((el) => {
+    try {
+      el.dataset.__geosnap_removed_popup = 'true';
+      el.style.setProperty('display', 'none', 'important');
+      el.style.setProperty('visibility', 'hidden', 'important');
+      el.style.setProperty('pointer-events', 'none', 'important');
+      removed += 1;
+    } catch (error) {
+      // ignore
+    }
+  });
+  return removed;
+}
+"""
 
 # Gluetun API configuration
 GLUETUN_API_URL = os.getenv("GLUETUN_API_URL", "http://gluetun-api:8001")
@@ -117,6 +243,11 @@ VPN_SHARED_PROXY_IDLE_TTL_SECONDS = _parse_positive_int(os.getenv("VPN_SHARED_PR
 # }
 _shared_proxy_manager: Dict[str, Dict] = {}
 _proxy_manager_lock = asyncio.Lock()
+
+_group_states: Dict[str, Dict[str, Any]] = {}
+_group_lock = asyncio.Lock()
+
+FINAL_TASK_STATUSES = {"completed", "failed"}
 
 async def _release_shared_proxy(location_key: str):
     """Release a reference to a shared proxy. Decrements ref count and destroys if needed."""
@@ -175,6 +306,113 @@ async def _schedule_proxy_teardown(location_key: str, container_id: str) -> None
         log_info(f"[VPN] Cancelled idle destroy timer for {location_key}")
     except Exception as e:
         log_warning(f"[VPN] Error during proxy teardown for {location_key}: {e}")
+
+
+def _group_location_key(country: Optional[str], city: Optional[str]) -> Optional[str]:
+    if not country or not city:
+        return None
+    return f"{country}/{city}"
+
+
+def _group_has_pending_tasks(group_id: str) -> bool:
+    for record in _task_store.values():
+        if record.get("group_id") == group_id and record.get("status") not in FINAL_TASK_STATUSES:
+            return True
+    return False
+
+
+async def _acquire_group_proxy(group_id: str, country: str, city: str, *, task_id: Optional[str] = None) -> tuple[str, str]:
+    location_key = _group_location_key(country, city)
+    if location_key is None:
+        raise ValueError("Group proxy acquisition requires both country and city")
+
+    async with _group_lock:
+        state = _group_states.get(group_id)
+        if state:
+            if state.get("location_key") != location_key:
+                raise ValueError(
+                    f"Group '{group_id}' is already bound to location {state.get('location_key')} but request asked for {location_key}"
+                )
+            state["active"] = state.get("active", 0) + 1
+            if task_id:
+                state.setdefault("tasks", set()).add(task_id)
+            log_info(f"[VPN-GROUP] Reusing proxy for group {group_id} at {location_key} (active={state['active']})")
+            return state["proxy_url"], state["container_id"]
+
+    proxy_url, container_id = await _create_gluetun_proxy(country, city)
+    if not proxy_url or not container_id:
+        raise Exception(f"Failed to create gluetun proxy for group {group_id} ({country}/{city})")
+
+    async with _group_lock:
+        # Another coroutine might have populated state while we awaited proxy creation.
+        state = _group_states.get(group_id)
+        if state:
+            # We no longer need the newly created container; destroy it and use existing.
+            log_warning(f"[VPN-GROUP] Proxy already existed for group {group_id}; destroying extra container {container_id}")
+            try:
+                await _destroy_gluetun_proxy(container_id)
+            except Exception as destroy_error:
+                log_warning(f"[VPN-GROUP] Error destroying redundant container {container_id}: {destroy_error}")
+            state["active"] = state.get("active", 0) + 1
+            if task_id:
+                state.setdefault("tasks", set()).add(task_id)
+            return state["proxy_url"], state["container_id"]
+
+        _group_states[group_id] = {
+            "location_key": location_key,
+            "proxy_url": proxy_url,
+            "container_id": container_id,
+            "active": 1,
+            "tasks": {task_id} if task_id else set(),
+        }
+        log_info(f"[VPN-GROUP] Created new proxy for group {group_id} at {location_key} (container {container_id})")
+
+    return proxy_url, container_id
+
+
+async def _release_group_proxy(group_id: str) -> None:
+    async with _group_lock:
+        state = _group_states.get(group_id)
+        if not state:
+            return
+        state["active"] = max(0, state.get("active", 0) - 1)
+        current_active = state["active"]
+    log_info(f"[VPN-GROUP] Released proxy for group {group_id} (active={current_active})")
+    await _maybe_destroy_group_proxy(group_id)
+
+
+async def _maybe_destroy_group_proxy(group_id: str) -> None:
+    async with _group_lock:
+        state = _group_states.get(group_id)
+        if not state:
+            return
+        if state.get("active", 0) > 0:
+            return
+        container_id = state.get("container_id")
+        location_key = state.get("location_key")
+
+    if _group_has_pending_tasks(group_id):
+        return
+
+    async with _group_lock:
+        state = _group_states.pop(group_id, None)
+
+    if not state:
+        return
+
+    container_id = state.get("container_id")
+    if container_id:
+        log_info(f"[VPN-GROUP] Destroying proxy for group {group_id} (container {container_id}, location {location_key})")
+        try:
+            await _destroy_gluetun_proxy(container_id)
+        except Exception as destroy_error:
+            log_warning(f"[VPN-GROUP] Error destroying group proxy {container_id}: {destroy_error}")
+
+async def _on_group_task_finalized(record: Dict) -> None:
+    group_id = record.get("group_id")
+    if not group_id:
+        return
+    await _maybe_destroy_group_proxy(group_id)
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -301,6 +539,8 @@ class ScreenshotRequest(BaseModel):
         description="If Cloudflare/Turnstile is detected, retry with Stealth Browser"
     )
     post_wait_ms: int = Field(DEFAULT_SETTINGS["post_wait_ms"], ge=0, le=120000, description="Extra delay after navigation/selector before capture (milliseconds)")
+    dismiss_popups: bool = Field(DEFAULT_SETTINGS["dismiss_popups"], description="Attempt to close or hide obstructive popups before capturing")
+    group_id: Optional[str] = Field(None, description="Optional identifier to group related tasks for shared VPN lifecycle")
     vpn_country: Optional[str] = Field(None, description="VPN country for proxy (requires vpn_city)")
     vpn_city: Optional[str] = Field(None, description="VPN city for proxy (requires vpn_country)")
 
@@ -355,6 +595,8 @@ class RecordingRequest(BaseModel):
     pre_record_wait_ms: int = Field(DEFAULT_SETTINGS["pre_record_wait_ms"], ge=0, le=120000, description="Extra delay after navigation before starting actions (milliseconds)")
     pause_before_scroll_ms: int = Field(DEFAULT_SETTINGS["pause_before_scroll_ms"], ge=0, le=120000, description="Pause duration before starting auto-scroll (milliseconds)")
     post_scroll_pause_ms: int = Field(DEFAULT_SETTINGS["post_scroll_pause_ms"], ge=0, le=120000, description="Pause duration after scrolling completes (milliseconds)")
+    dismiss_popups: bool = Field(DEFAULT_SETTINGS["dismiss_popups"], description="Attempt to close or hide obstructive popups before or during recording")
+    group_id: Optional[str] = Field(None, description="Optional identifier to group related tasks for shared VPN lifecycle")
     vpn_country: Optional[str] = Field(None, description="VPN country for proxy (requires vpn_city)")
     vpn_city: Optional[str] = Field(None, description="VPN city for proxy (requires vpn_country)")
 
@@ -385,6 +627,7 @@ class TaskInfo(BaseModel):
     error: Optional[str] = None
     content_type: Optional[str] = None
     bytes_size: Optional[int] = None
+    group_id: Optional[str] = None
 
 # In-memory task store and queue (global, shared across all users)
 # All tasks from all users are queued here and processed sequentially
@@ -440,6 +683,7 @@ def _create_task(kind: TaskKind, payload: dict) -> str:
         "result_bytes": None,
         "content_type": None,
         "payload": payload,
+        "group_id": payload.get("group_id"),
     }
     # fire-and-forget broadcast of initial queued state
     try:
@@ -448,6 +692,7 @@ def _create_task(kind: TaskKind, payload: dict) -> str:
             "kind": kind,
             "status": "queued",
             "enqueued_at": _task_store[task_id]["enqueued_at"],
+            "group_id": payload.get("group_id"),
         }))
     except Exception:
         pass
@@ -483,6 +728,7 @@ async def _queue_worker():
                     "kind": record["kind"],
                     "status": record["status"],
                     "started_at": record["started_at"],
+                    "group_id": record.get("group_id"),
                 })
             except Exception:
                 pass
@@ -504,10 +750,18 @@ async def _queue_worker():
                         pass
                 if kind == "screenshot":
                     request_model = ScreenshotRequest(**payload)
-                    result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(request_model, progress_cb)
+                    result_bytes, content_type = await _capture_raw_screenshot_in_new_browser(
+                        request_model,
+                        progress_cb,
+                        task_id=task_id,
+                    )
                 else:
                     request_model = RecordingRequest(**payload)
-                    result_bytes, content_type = await _capture_raw_recording_in_new_browser(request_model, progress_cb)
+                    result_bytes, content_type = await _capture_raw_recording_in_new_browser(
+                        request_model,
+                        progress_cb,
+                        task_id=task_id,
+                    )
                 record["result_bytes"] = result_bytes
                 record["content_type"] = content_type
                 record["status"] = "completed"
@@ -521,9 +775,11 @@ async def _queue_worker():
                         "finished_at": record["finished_at"],
                         "content_type": content_type,
                         "bytes_size": len(result_bytes) if result_bytes is not None else None,
+                        "group_id": record.get("group_id"),
                     })
                 except Exception:
                     pass
+                await _on_group_task_finalized(record)
             except Exception as e:
                 logger.exception(f"Task {task_id} failed")
                 if record:
@@ -538,9 +794,12 @@ async def _queue_worker():
                         "status": "failed",
                         "finished_at": record["finished_at"] if record else None,
                         "error": str(e),
+                        "group_id": record.get("group_id") if record else None,
                     })
                 except Exception:
                     pass
+                if record:
+                    await _on_group_task_finalized(record)
         except Exception as e:
             log_error(f"[QUEUE] Error in queue worker: {e}")
         finally:
@@ -784,28 +1043,150 @@ async def _perform_scroll_sequence(page: Page, request: RecordingRequest):
         await page.wait_for_timeout(1000)
         await _scroll_to_end(page, request.scroll_speed, direction="up")
 
-async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
+
+async def _dismiss_page_obstructions(
+    page: Page,
+    *,
+    max_rounds: int = 4,
+    delay_between_rounds_ms: int = 600,
+    progress_cb: Optional[Callable[[str, Optional[Dict]], Awaitable[None]]] = None,
+) -> int:
+    """Best-effort attempt to dismiss or hide obstructive popups/modals.
+
+    Returns the number of actions taken (clicks or removals)."""
+
+    async def _notify(stage: str, details: Optional[Dict] = None) -> None:
+        if progress_cb:
+            try:
+                await progress_cb(stage, details or {})
+            except Exception:
+                pass
+
+    async def _safe_click(locator, description: str) -> bool:
+        try:
+            await locator.wait_for(state="attached", timeout=500)
+        except PlaywrightTimeoutError:
+            return False
+        except Exception:
+            return False
+        try:
+            await locator.scroll_into_view_if_needed(timeout=400)
+        except Exception:
+            pass
+        try:
+            await locator.click(timeout=600)
+            log_info(f"Dismissed popup via {description}")
+            await page.wait_for_timeout(150)
+            return True
+        except PlaywrightTimeoutError:
+            pass
+        except Exception:
+            pass
+        try:
+            await locator.evaluate(
+                "node => { if (!node) return; try { node.click(); } catch (error) {} "
+                "if (node.dispatchEvent) { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } }"
+            )
+            log_info(f"Dismissed popup via JS fallback ({description})")
+            await page.wait_for_timeout(150)
+            return True
+        except Exception:
+            return False
+
+    async def _click_locator_batch(locator, description: str, max_clicks: int = 2) -> int:
+        try:
+            count = await locator.count()
+        except Exception:
+            return 0
+        actions = 0
+        limit = min(count, max_clicks)
+        for idx in range(limit):
+            candidate = locator.nth(idx)
+            success = await _safe_click(candidate, description)
+            if success:
+                actions += 1
+        return actions
+
+    await _notify("popup_cleanup_start")
+    total_actions = 0
+
+    for attempt in range(1, max_rounds + 1):
+        await _notify("popup_cleanup_attempt", {"attempt": attempt})
+        round_actions = 0
+
+        # Click accessible buttons/links by text pattern
+        for pattern in POPUP_CLOSE_TEXT_PATTERNS:
+            try:
+                button_locator = page.get_by_role("button", name=pattern)
+                round_actions += await _click_locator_batch(button_locator, f"button[name~={pattern.pattern}]")
+            except Exception:
+                pass
+            try:
+                link_locator = page.get_by_role("link", name=pattern)
+                round_actions += await _click_locator_batch(link_locator, f"link[name~={pattern.pattern}]", max_clicks=1)
+            except Exception:
+                pass
+
+        # Click generic selectors (close icons etc.)
+        for selector in POPUP_CLICKABLE_SELECTORS:
+            try:
+                locator = page.locator(selector)
+                round_actions += await _click_locator_batch(locator, f"selector:{selector}")
+            except Exception:
+                pass
+
+        # Hide fixed/sticky overlays via DOM manipulation
+        try:
+            removed = await page.evaluate(
+                POPUP_REMOVAL_JS,
+                list(POPUP_CLICKABLE_SELECTORS),
+                list(POPUP_OVERLAY_KEYWORDS),
+            )
+            if isinstance(removed, (int, float)):
+                round_actions += int(removed)
+        except Exception:
+            pass
+
+        total_actions += round_actions
+        await _notify("popup_cleanup_attempt_done", {"attempt": attempt, "removed": round_actions})
+
+        if round_actions == 0:
+            if attempt < max_rounds:
+                try:
+                    await page.wait_for_timeout(delay_between_rounds_ms)
+                except Exception:
+                    pass
+            else:
+                break
+        else:
+            try:
+                await page.wait_for_timeout(250)
+            except Exception:
+                pass
+
+    await _notify("popup_cleanup_done", {"removed": total_actions})
+    if total_actions:
+        log_info(f"Popup cleanup removed or dismissed {total_actions} element(s)")
+    return total_actions
+
+async def _capture_raw_recording_in_new_browser(
+    request_model: RecordingRequest,
+    progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None,
+    *,
+    task_id: Optional[str] = None,
+) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a video in a new browser instance."""
     display = None
     gluetun_container_id = None
     proxy_url = None
     proxy_location_key = None
+    proxy_release: Optional[Callable[[], Awaitable[None]]] = None
     
-    # Get or create shared gluetun proxy if VPN location is provided
-    if request_model.vpn_country and request_model.vpn_city:
-        if progress_cb:
-            try:
-                await progress_cb("creating_proxy", {"country": request_model.vpn_country, "city": request_model.vpn_city})
-            except Exception:
-                pass
-        proxy_url, gluetun_container_id, proxy_location_key = await _get_or_create_shared_proxy(request_model.vpn_country, request_model.vpn_city)
-        if not proxy_url or not proxy_location_key:
-            raise Exception(f"Failed to create gluetun proxy for {request_model.vpn_country}/{request_model.vpn_city}")
-        if progress_cb:
-            try:
-                await progress_cb("proxy_created", {})
-            except Exception:
-                pass
+    proxy_url, gluetun_container_id, proxy_location_key, proxy_release, _ = await _obtain_vpn_proxy_for_request(
+        request_model,
+        progress_cb=progress_cb,
+        task_id=task_id,
+    )
     
     if not request_model.headless:
         log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
@@ -913,6 +1294,11 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                             await progress_cb("navigated", {"url": request_model.url})
                         except Exception:
                             pass
+                    if getattr(request_model, "dismiss_popups", True):
+                        try:
+                            await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                        except Exception:
+                            log_warning("Popup cleanup failed during primary navigation (recording)")
                     if await _page_contains_turnstile(page):
                         snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
                         log_info(f"Turnstile indicators present (recording). Body snippet: {snippet[:300].replace('\n',' ')}...")
@@ -958,6 +1344,11 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                                 except Exception:
                                     pass
                             log_info(f"Stealth Browser navigation successful for recording {request_model.url}")
+                            if getattr(request_model, "dismiss_popups", True):
+                                try:
+                                    await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                                except Exception:
+                                    log_warning("Popup cleanup failed during fallback navigation (recording)")
                             
                             # Optional pre-record wait for background resources
                             if request_model.pre_record_wait_ms and request_model.pre_record_wait_ms > 0:
@@ -972,6 +1363,11 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                                         await progress_cb("pre_record_wait_done", {})
                                     except Exception:
                                         pass
+                            if getattr(request_model, "dismiss_popups", True):
+                                try:
+                                    await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                                except Exception:
+                                    log_warning("Popup cleanup failed prior to fallback recording actions")
 
                             # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
                             # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
@@ -1039,6 +1435,11 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                                     await progress_cb("pre_record_wait_done", {})
                                 except Exception:
                                     pass
+                        if getattr(request_model, "dismiss_popups", True):
+                            try:
+                                await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                            except Exception:
+                                log_warning("Popup cleanup failed prior to recording actions")
 
                         # Perform actions after load. Scrolling may stop early if infinite-scroll is detected.
                         # When auto-scroll is enabled, we use explicit pre/post pauses and do not use record_duration
@@ -1116,38 +1517,34 @@ async def _capture_raw_recording_in_new_browser(request_model: RecordingRequest,
                 raise FileNotFoundError("Video file was not created.")
     finally:
         # Release shared proxy (will decrement ref count and destroy if needed)
-        if proxy_location_key:
+        if proxy_release:
             try:
-                await _release_shared_proxy(proxy_location_key)
+                await proxy_release()
             except Exception as e:
-                log_warning(f"Error releasing shared proxy: {e}")
+                log_warning(f"Error releasing proxy: {e}")
         
         if display:
             log_info("Stopping virtual display.")
             display.stop()
 
-async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotRequest, progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None) -> tuple[bytes, str]:
+async def _capture_raw_screenshot_in_new_browser(
+    request_model: ScreenshotRequest,
+    progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None,
+    *,
+    task_id: Optional[str] = None,
+) -> tuple[bytes, str]:
     """Handles the entire lifecycle of capturing a screenshot in a new browser instance."""
     display = None
     gluetun_container_id = None
     proxy_url = None
     proxy_location_key = None
+    proxy_release: Optional[Callable[[], Awaitable[None]]] = None
     
-    # Get or create shared gluetun proxy if VPN location is provided
-    if request_model.vpn_country and request_model.vpn_city:
-        if progress_cb:
-            try:
-                await progress_cb("creating_proxy", {"country": request_model.vpn_country, "city": request_model.vpn_city})
-            except Exception:
-                pass
-        proxy_url, gluetun_container_id, proxy_location_key = await _get_or_create_shared_proxy(request_model.vpn_country, request_model.vpn_city)
-        if not proxy_url or not proxy_location_key:
-            raise Exception(f"Failed to create gluetun proxy for {request_model.vpn_country}/{request_model.vpn_city}")
-        if progress_cb:
-            try:
-                await progress_cb("proxy_created", {})
-            except Exception:
-                pass
+    proxy_url, gluetun_container_id, proxy_location_key, proxy_release, _ = await _obtain_vpn_proxy_for_request(
+        request_model,
+        progress_cb=progress_cb,
+        task_id=task_id,
+    )
     
     if not request_model.headless:
         log_info(f"Starting virtual display for headful request: {request_model.viewport_width}x{request_model.viewport_height}")
@@ -1251,6 +1648,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                         await progress_cb("navigated", {"url": request_model.url})
                     except Exception:
                         pass
+                if getattr(request_model, "dismiss_popups", True):
+                    try:
+                        await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                    except Exception:
+                        log_warning("Popup cleanup failed during primary navigation")
                 # Log body snippet for debugging when indicators are present
                 if await _page_contains_turnstile(page):
                     snippet = (await page.evaluate("document.body && document.body.innerText ? document.body.innerText.slice(0, 2000) : ''")) or ''
@@ -1299,6 +1701,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                                 error_type = type(fallback_error).__name__
                                 log_error(f"[VPN-FALLBACK] Fallback navigation failed after {fallback_nav_time:.2f}ms: {error_type}: {str(fallback_error)}")
                                 raise
+                            if getattr(request_model, "dismiss_popups", True):
+                                try:
+                                    await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                                except Exception:
+                                    log_warning("Popup cleanup failed during fallback navigation")
                             if await _page_contains_turnstile(page):
                                 log_info("Turnstile still present after Stealth Browser retry")
                                 if progress_cb:
@@ -1336,6 +1743,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                                         await progress_cb("selector_ready", {"selector": request_model.wait_for_selector})
                                     except Exception:
                                         pass
+                            if getattr(request_model, "dismiss_popups", True):
+                                try:
+                                    await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                                except Exception:
+                                    log_warning("Popup cleanup failed before fallback screenshot capture")
 
                             # Capture screenshot inside Stealth Browser context and return immediately
                             screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
@@ -1397,6 +1809,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
                             await progress_cb("post_wait_done", {})
                         except Exception:
                             pass
+                if getattr(request_model, "dismiss_popups", True):
+                    try:
+                        await _dismiss_page_obstructions(page, progress_cb=progress_cb)
+                    except Exception:
+                        log_warning("Popup cleanup failed before screenshot capture")
                 
                 screenshot_options = {'full_page': request_model.full_page, 'type': request_model.image_type}
                 if request_model.image_type == 'jpeg':
@@ -1431,11 +1848,11 @@ async def _capture_raw_screenshot_in_new_browser(request_model: ScreenshotReques
         return screenshot_buffer, content_type
     finally:
         # Release shared proxy (will decrement ref count and destroy if needed)
-        if proxy_location_key:
+        if proxy_release:
             try:
-                await _release_shared_proxy(proxy_location_key)
+                await proxy_release()
             except Exception as e:
-                log_warning(f"Error releasing shared proxy: {e}")
+                log_warning(f"Error releasing proxy: {e}")
         
         if display:
             log_info("Stopping virtual display.")
@@ -1510,6 +1927,7 @@ async def get_task_status(task_id: str):
         error=record["error"],
         content_type=record["content_type"],
         bytes_size=(len(record["result_bytes"]) if record.get("result_bytes") is not None else None),
+        group_id=record.get("group_id"),
     )
 
 # Fetch result (binary)
@@ -1665,6 +2083,7 @@ async def ws_task_updates(websocket: WebSocket, task_id: str):
                     "error": record["error"],
                     "content_type": record["content_type"],
                     "bytes_size": len(record["result_bytes"]) if record.get("result_bytes") is not None else None,
+                    "group_id": record.get("group_id"),
                 }))
             except Exception:
                 pass
@@ -1678,4 +2097,51 @@ async def ws_task_updates(websocket: WebSocket, task_id: str):
         pass
     finally:
         ws_manager.disconnect(task_id, websocket)
+
+async def _obtain_vpn_proxy_for_request(
+    request_model: ScreenshotRequest | RecordingRequest,
+    *,
+    progress_cb: Optional[Callable[[str, Dict], Awaitable[None]]] = None,
+    task_id: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[Callable[[], Awaitable[None]]], Optional[str]]:
+    country = getattr(request_model, "vpn_country", None)
+    city = getattr(request_model, "vpn_city", None)
+    group_id = getattr(request_model, "group_id", None)
+
+    if not country or not city:
+        return None, None, None, None, group_id
+
+    if progress_cb:
+        try:
+            await progress_cb("creating_proxy", {"country": country, "city": city})
+        except Exception:
+            pass
+
+    if group_id:
+        proxy_url, container_id = await _acquire_group_proxy(group_id, country, city, task_id=task_id)
+
+        async def release_group() -> None:
+            await _release_group_proxy(group_id)
+
+        if progress_cb:
+            try:
+                await progress_cb("proxy_created", {})
+            except Exception:
+                pass
+        return proxy_url, container_id, None, release_group, group_id
+
+    proxy_url, container_id, location_key = await _get_or_create_shared_proxy(country, city)
+    if not proxy_url or not location_key:
+        raise Exception(f"Failed to create gluetun proxy for {country}/{city}")
+
+    async def release_shared() -> None:
+        await _release_shared_proxy(location_key)
+
+    if progress_cb:
+        try:
+            await progress_cb("proxy_created", {})
+        except Exception:
+            pass
+
+    return proxy_url, container_id, location_key, release_shared, None
 
