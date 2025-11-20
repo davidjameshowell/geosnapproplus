@@ -91,7 +91,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
-          tags: tag:ci
+          tags: tag:k8s-operator
 
       - name: Install Helm
         uses: azure/setup-helm@v4
