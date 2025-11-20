@@ -1,16 +1,39 @@
 version: "3.9"
 
 services:
-  backend:
+  screenshot-api:
     build:
-      context: ./backend-api
+      context: ./screenshot-api
       dockerfile: Dockerfile.dev
-    container_name: geosnappro-backend
+    container_name: geosnappro-screenshot-api
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=DEBUG
+      - GLUETUN_API_URL=http://gluetun-api:8001
+      - VPN_SHARED_PROXY_IDLE_TTL_SECONDS=20
+    networks:
+      - geosnappro-network
+
+  gluetun-api:
+    build:
+      context: ./gluetun-api-docker
+      dockerfile: Dockerfile.dev
+    container_name: geosnappro-gluetun-api
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+      - INSTANCE_LIMIT=2
+      - WIREGUARD_PRIVATE_KEY=aCv31OvwOxhL7SzeSIAiQm1nXPw/pPNi+HPMj9rcxG8=
+      - WIREGUARD_ADDRESSES=10.68.50.98/32
+      - DOCKER_NETWORK=geosnappro-network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - geosnappro-network
 
   frontend:
     build:
@@ -20,16 +43,24 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - BACKEND_URL=http://backend:8000
+      - BACKEND_URL=http://screenshot-api:8000
       - BACKEND_WS_PUBLIC_URL=ws://localhost:8000
+      - GLUETUN_API_URL=http://gluetun-api:8001
       - DEBUG=false
       - PORT=5000
       - POLL_INTERVAL_SECONDS=2
       - MEDIA_DIR=/app/media
     depends_on:
-      - backend
+      - screenshot-api
+      - gluetun-api
     volumes:
       - frontend_media:/app/media
+    networks:
+      - geosnappro-network
+
+networks:
+  geosnappro-network:
+    driver: bridge
 
 volumes:
   frontend_media:

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gluetun-test-runner
+  namespace: gluetun-system
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test-runner
+      image: python:3.11-slim
+      command: ["sleep", "3600"]  # Keep pod alive for 1 hour
+      workingDir: /tests
+      env:
+        - name: GLUETUN_K8S_API_URL
+          value: "http://gluetun-k8s-api:8001"
+      volumeMounts:
+        - name: test-files
+          mountPath: /tests
+  volumes:
+    - name: test-files
+      emptyDir: {}
+

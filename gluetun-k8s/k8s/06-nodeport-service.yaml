@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gluetun-k8s-api-nodeport
+  namespace: gluetun-system
+  labels:
+    app: gluetun-k8s-api
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      nodePort: 30801  # External access port
+      protocol: TCP
+  selector:
+    app: gluetun-k8s-api
+

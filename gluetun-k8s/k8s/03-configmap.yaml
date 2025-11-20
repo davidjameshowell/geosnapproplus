@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gluetun-k8s-api-config
+  namespace: gluetun-system
+data:
+  # Configuration values
+  K8S_NAMESPACE: "gluetun-system"
+  INSTANCE_LIMIT: "5"
+  LOG_LEVEL: "INFO"
+  SERVERS_FILE_PATH: ""
+  SERVERS_JSON: ""
+

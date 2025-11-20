@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gluetun-k8s-api
+  namespace: gluetun-system
+  labels:
+    app: gluetun-k8s-api
+spec:
+  replicas: 1  # Single instance to maintain state consistency
+  selector:
+    matchLabels:
+      app: gluetun-k8s-api
+  template:
+    metadata:
+      labels:
+        app: gluetun-k8s-api
+    spec:
+      serviceAccountName: gluetun-k8s-api
+      containers:
+        - name: api
+          image: gluetun-k8s-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          env:
+            - name: K8S_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: gluetun-k8s-api-config
+                  key: K8S_NAMESPACE
+            - name: INSTANCE_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: gluetun-k8s-api-config
+                  key: INSTANCE_LIMIT
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: gluetun-k8s-api-config
+                  key: LOG_LEVEL
+            - name: SERVERS_FILE_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: gluetun-k8s-api-config
+                  key: SERVERS_FILE_PATH
+            - name: SERVERS_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: gluetun-k8s-api-config
+                  key: SERVERS_JSON
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gluetun-wireguard-credentials
+                  key: wireguard-private-key
+            - name: WIREGUARD_ADDRESSES
+              valueFrom:
+                secretKeyRef:
+                  name: gluetun-wireguard-credentials
+                  key: wireguard-addresses
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: preloaded-server-list
+              mountPath: /data/server-list
+              readOnly: true
+      volumes:
+        - name: preloaded-server-list
+          configMap:
+            name: gluetun-mullvad-server-list
+            optional: true
+

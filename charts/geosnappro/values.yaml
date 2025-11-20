@@ -1,0 +1,296 @@
+# Default values for geosnappro unified chart
+# This chart deploys screenshot-api, gluetun-api, and frontend together
+
+global:
+  namespace: ""
+  imagePullSecrets:
+    - name: ghcr-creds-regcred
+
+# Screenshot API Configuration
+screenshotApi:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: screenshot-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  nameOverride: ""
+  fullnameOverride: "screenshot-api"
+
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+
+  podAnnotations: {}
+  podLabels: {}
+
+  podSecurityContext: {}
+  securityContext: {}
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: screenshot-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources: {}
+    # limits:
+    #   cpu: 1000m
+    #   memory: 1Gi
+    # requests:
+    #   cpu: 500m
+    #   memory: 512Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: null
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Environment variables - matches docker-compose.yml
+  env:
+    PYTHONUNBUFFERED: "1"
+    LOG_LEVEL: "DEBUG"
+    VPN_SHARED_PROXY_IDLE_TTL_SECONDS: "20"
+    API_KEY: ""
+    RATE_LIMIT_WINDOW_SECONDS: "60"
+    RATE_LIMIT_MAX_REQUESTS: "60"
+    CAMOUFOX_EXECUTABLE: ""
+    CAMOUFOX_DEFAULT_UA: ""
+
+  # GLUETUN_API_URL is automatically set to http://gluetun-api:8001
+  # based on the gluetunApi configuration below
+  gluetunApi:
+    # Leave empty to auto-generate based on gluetunApi service
+    url: ""
+    serviceName: "gluetun-api"
+    port: 8001
+
+  extraEnv: []
+  extraEnvFrom: []
+  extraVolumeMounts: []
+  extraVolumes: []
+
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  startupProbe:
+    enabled: false
+    httpGet:
+      path: /health
+      port: http
+    failureThreshold: 30
+    periodSeconds: 5
+
+# Gluetun API Configuration
+gluetunApi:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: gluetun-k8s-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  nameOverride: ""
+  fullnameOverride: "gluetun-api"
+
+  serviceAccount:
+    create: true
+    name: ""
+
+  # RBAC is required for gluetun-api to manage pods in the cluster
+  rbac:
+    create: true
+
+  # Configuration - matches docker-compose.yml
+  config:
+    namespace: ""  # Defaults to release namespace
+    instanceLimit: 2
+    logLevel: "DEBUG"
+    pythonUnbuffered: "1"
+    serversFilePath: ""
+    serversJSON: ""
+    preloadedServersConfigMap: "gluetun-mullvad-server-list"
+    firewallInputPorts: "8888"
+
+  # WireGuard credentials - matches docker-compose.yml
+  # These should be provided via a secret
+  wireguardSecret:
+    name: "gluetun-wireguard-credentials"
+    privateKeyKey: "wireguard-private-key"
+    addressesKey: "wireguard-addresses"
+
+  # Default values for the secret (should be overridden)
+  wireguard:
+    privateKey: "aCv31OvwOxhL7SzeSIAiQm1nXPw/pPNi+HPMj9rcxG8="
+    addresses: "10.68.50.98/32"
+
+  service:
+    type: ClusterIP
+    port: 8001
+
+  nodePortService:
+    enabled: false
+    port: 8001
+    nodePort: 30801
+
+  resources: {}
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+    # requests:
+    #   cpu: 250m
+    #   memory: 256Mi
+
+  podAnnotations: {}
+  podLabels: {}
+
+  podSecurityContext: {}
+  securityContext: {}
+
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
+
+  extraEnv: []
+
+# Frontend Configuration
+frontend:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: frontend
+    pullPolicy: IfNotPresent
+    tag: "latest"
+
+  nameOverride: ""
+  fullnameOverride: "frontend"
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  podAnnotations: {}
+
+  podSecurityContext:
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+      - ALL
+
+  service:
+    type: ClusterIP
+    port: 5000
+    targetPort: 5000
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: frontend.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 100
+    targetCPUUtilizationPercentage: 80
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Environment variables - matches docker-compose.yml
+  # BACKEND_URL and GLUETUN_API_URL are automatically set
+  # based on the service names
+  env:
+    BACKEND_URL: "http://screenshot-api:8000"
+    BACKEND_WS_PUBLIC_URL: "ws://localhost:8000"
+    GLUETUN_API_URL: "http://gluetun-api:8001"
+    DEBUG: "false"
+    PORT: "5000"
+    POLL_INTERVAL_SECONDS: "2"
+    MEDIA_DIR: "/app/media"
+
+  # Media volume configuration - matches docker-compose.yml volume
+  mediaVolume:
+    enabled: true
+    storageClass: "standard"
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    mountPath: "/app/media"
+
+  # Health check configuration
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+

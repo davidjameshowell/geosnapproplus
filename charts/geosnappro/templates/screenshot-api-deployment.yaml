@@ -1,0 +1,104 @@
+{{- if .Values.screenshotApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "geosnappro.screenshotApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.screenshotApi.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.screenshotApi.autoscaling.enabled }}
+  replicas: {{ .Values.screenshotApi.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "geosnappro.screenshotApi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "geosnappro.screenshotApi.selectorLabels" . | nindent 8 }}
+        {{- if .Values.screenshotApi.podLabels }}
+        {{- toYaml .Values.screenshotApi.podLabels | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.screenshotApi.podAnnotations }}
+        {{- toYaml .Values.screenshotApi.podAnnotations | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "geosnappro.screenshotApi.serviceAccountName" . }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.screenshotApi.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.screenshotApi.podSecurityContext | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.screenshotApi.image.repository }}:{{ .Values.screenshotApi.image.tag }}"
+          imagePullPolicy: {{ .Values.screenshotApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.screenshotApi.service.targetPort }}
+              protocol: TCP
+          {{- $gluetunUrl := (default (printf "http://%s:%v" .Values.screenshotApi.gluetunApi.serviceName .Values.screenshotApi.gluetunApi.port) .Values.screenshotApi.gluetunApi.url) }}
+          {{- $envList := list (dict "name" "GLUETUN_API_URL" "value" $gluetunUrl) }}
+          {{- range $key, $value := .Values.screenshotApi.env }}
+          {{- $envList = append $envList (dict "name" $key "value" (printf "%v" $value)) }}
+          {{- end }}
+          {{- range .Values.screenshotApi.extraEnv }}
+          {{- $envList = append $envList . }}
+          {{- end }}
+          {{- if $envList }}
+          env:
+            {{- toYaml $envList | nindent 12 }}
+          {{- end }}
+          {{- if .Values.screenshotApi.extraEnvFrom }}
+          envFrom:
+            {{- toYaml .Values.screenshotApi.extraEnvFrom | nindent 12 }}
+          {{- end }}
+          {{- if .Values.screenshotApi.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml .Values.screenshotApi.extraVolumeMounts | nindent 12 }}
+          {{- end }}
+          {{- if .Values.screenshotApi.securityContext }}
+          securityContext:
+            {{- toYaml .Values.screenshotApi.securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .Values.screenshotApi.resources }}
+          resources:
+            {{- toYaml .Values.screenshotApi.resources | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.screenshotApi.livenessProbe .Values.screenshotApi.livenessProbe.enabled }}
+          livenessProbe:
+            {{- omit .Values.screenshotApi.livenessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.screenshotApi.readinessProbe .Values.screenshotApi.readinessProbe.enabled }}
+          readinessProbe:
+            {{- omit .Values.screenshotApi.readinessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.screenshotApi.startupProbe .Values.screenshotApi.startupProbe.enabled }}
+          startupProbe:
+            {{- omit .Values.screenshotApi.startupProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+      {{- if .Values.screenshotApi.extraVolumes }}
+      volumes:
+        {{- toYaml .Values.screenshotApi.extraVolumes | nindent 8 }}
+      {{- end }}
+      {{- if .Values.screenshotApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.screenshotApi.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.screenshotApi.affinity }}
+      affinity:
+        {{- toYaml .Values.screenshotApi.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.screenshotApi.tolerations }}
+      tolerations:
+        {{- toYaml .Values.screenshotApi.tolerations | nindent 8 }}
+      {{- end }}
+{{- end }}
+

@@ -1,0 +1,14 @@
+version: "3"
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=aCv31OvwOxhL7SzeSIAiQm1nXPw/pPNi+HPMj9rcxG8=
+      - WIREGUARD_ADDRESSES=10.68.50.98/32
+      - SERVER_CITIES=Amsterdam

@@ -1,0 +1,34 @@
+{{- if and .Values.screenshotApi.enabled .Values.screenshotApi.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "geosnappro.screenshotApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.screenshotApi.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "geosnappro.screenshotApi.fullname" . }}
+  minReplicas: {{ .Values.screenshotApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.screenshotApi.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.screenshotApi.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.screenshotApi.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.screenshotApi.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.screenshotApi.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+

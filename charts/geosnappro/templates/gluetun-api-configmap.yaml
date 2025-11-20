@@ -1,0 +1,21 @@
+{{- if .Values.gluetunApi.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.gluetunApi.labels" . | nindent 4 }}
+data:
+  K8S_NAMESPACE: "{{ default .Release.Namespace .Values.gluetunApi.config.namespace }}"
+  INSTANCE_LIMIT: "{{ .Values.gluetunApi.config.instanceLimit }}"
+  LOG_LEVEL: "{{ .Values.gluetunApi.config.logLevel }}"
+  PYTHONUNBUFFERED: "{{ .Values.gluetunApi.config.pythonUnbuffered }}"
+  SERVERS_FILE_PATH: "{{ .Values.gluetunApi.config.serversFilePath }}"
+  SERVERS_JSON: |-
+    {{- if .Values.gluetunApi.config.serversJSON }}
+    {{- .Values.gluetunApi.config.serversJSON | nindent 4 }}
+    {{- end }}
+  FIREWALL_INPUT_PORTS: "{{ .Values.gluetunApi.config.firewallInputPorts }}"
+{{- end }}
+

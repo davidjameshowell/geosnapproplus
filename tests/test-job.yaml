@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: frontend-test
+  namespace: default
+  labels:
+    app: frontend-test
+spec:
+  backoffLimit: 3
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: frontend-test
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: frontend-test
+        image: frontend-test:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: FRONTEND_URL
+          value: "http://frontend:5000"
+        - name: BACKEND_URL
+          value: "http://screenshot-api:8000"
+        - name: GLUETUN_API_URL
+          value: "http://gluetun-api:8001"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi

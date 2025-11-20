@@ -1,0 +1,18 @@
+apiVersion: v2
+name: geosnappro
+description: Unified Helm chart for the complete GeoSnappro application
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - geosnappro
+  - screenshot-api
+  - gluetun-api
+  - frontend
+home: https://github.com/geosnappro/geosnappro
+sources:
+  - https://github.com/geosnappro/geosnappro
+maintainers:
+  - name: GeoSnappro Team
+    email: team@geosnappro.com
+

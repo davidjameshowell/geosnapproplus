@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gluetun-system
+  labels:
+    app: gluetun-k8s-api
+    managed-by: gluetun-k8s
+
