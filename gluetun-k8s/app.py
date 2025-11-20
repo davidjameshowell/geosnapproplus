@@ -10,6 +10,7 @@ import ast
 import json
 import logging
 import os
+import random
 import time
 import uuid
 from typing import Dict, Tuple
@@ -607,8 +608,9 @@ def start_gluetun():
                 error_msg += f" for city '{city_filter}'"
             return jsonify({"error": error_msg}), 400
         
-        server_name = matching_servers[0]
-        logger.info(f"Selected server '{server_name}' from {len(matching_servers)} matching servers")
+        # Select a random server from the matching list
+        server_name = random.choice(matching_servers)
+        logger.info(f"Selected random server '{server_name}' from {len(matching_servers)} matching servers")
     else:
         return jsonify({"error": "Must provide either 'server' or 'country'/'city' parameters"}), 400
 

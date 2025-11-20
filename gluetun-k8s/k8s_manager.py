@@ -309,7 +309,7 @@ class GluetunK8sManager:
                 service_info = self._create_proxy_service(pod_id)
                 service_url = None
                 if service_info.get("dns") and service_info.get("port"):
-                    service_url = f"http://{service_info['dns']}:{service_info['port']}"
+                    service_url = f"http://{username}:{password}@{service_info['dns']}:{service_info['port']}"
                 result.update({
                     "service_name": service_info.get("name"),
                     "service_cluster_ip": service_info.get("cluster_ip"),
@@ -460,7 +460,7 @@ class GluetunK8sManager:
                 "service_cluster_ip": service_info.get("cluster_ip"),
                 "service_dns": service_info.get("dns"),
                 "service_port": service_info.get("port"),
-                "service_url": f"http://{service_info['dns']}:{service_info['port']}" if service_info.get("dns") and service_info.get("port") else None,
+                "service_url": f"http://{username}:{password}@{service_info['dns']}:{service_info['port']}" if service_info.get("dns") and service_info.get("port") and username and password else None,
                 "status": pod.status.phase.lower(),
             }
             
@@ -528,7 +528,7 @@ class GluetunK8sManager:
                     "service_cluster_ip": service_info.get("cluster_ip"),
                     "service_dns": service_info.get("dns"),
                     "service_port": service_info.get("port"),
-                    "service_url": f"http://{service_info['dns']}:{service_info['port']}" if service_info.get("dns") and service_info.get("port") else None,
+                    "service_url": f"http://{username}:{password}@{service_info['dns']}:{service_info['port']}" if service_info.get("dns") and service_info.get("port") and username and password else None,
                     "status": pod.status.phase.lower() if pod.status else "unknown",
                 })
             

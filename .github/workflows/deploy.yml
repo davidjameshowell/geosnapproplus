@@ -1,0 +1,139 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: frontend
+            context: ./frontend
+            image: frontend
+            dockerfile: ./frontend/Dockerfile
+          - service: screenshot-api
+            context: ./screenshot-api
+            image: screenshot-api
+            dockerfile: ./screenshot-api/Dockerfile
+          - service: gluetun-service
+            context: ./gluetun-k8s
+            image: gluetun-k8s-api
+            dockerfile: ./gluetun-k8s/Dockerfile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=sha-${{ github.sha }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  deploy:
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Setup kubeconfig
+        run: |
+          # Create ~/.kube directory if it doesn't exist
+          mkdir -p ~/.kube
+          
+          # Create a kubeconfig file with insecure-skip-tls-verify
+          cat > ~/.kube/config << EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              insecure-skip-tls-verify: true
+              server: https://k3s-control-plane:6443
+            name: tailscale-k8s
+          users:
+          - name: github-actions
+            user:
+              token: ${{ secrets.KUBE_TOKEN }}
+          contexts:
+          - context:
+              cluster: tailscale-k8s
+              user: github-actions
+              namespace: geosnappro
+            name: tailscale-k8s
+          current-context: tailscale-k8s
+          EOF
+          
+          # Set proper permissions
+          chmod 600 ~/.kube/config
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install geosnappro ./charts/geosnappro \
+            --namespace geosnappro \
+            --create-namespace \
+            --set global.imagePullSecrets[0].name=ghcr-secret \
+            --set frontend.image.tag=sha-${{ github.sha }} \
+            --set screenshotApi.image.tag=sha-${{ github.sha }} \
+            --set gluetunApi.image.tag=sha-${{ github.sha }} \
+            --set gluetunApi.wireguard.privateKey="${{ secrets.WIREGUARD_PRIVATE_KEY }}" \
+            --set gluetunApi.wireguard.addresses="${{ vars.WIREGUARD_ADDRESS }}"

@@ -291,8 +291,10 @@ async def _schedule_proxy_teardown(location_key: str, container_id: str) -> None
 
 
 def _group_location_key(country: Optional[str], city: Optional[str]) -> Optional[str]:
-    if not country or not city:
+    if not country:
         return None
+    if not city:
+        return f"{country}/_random_"
     return f"{country}/{city}"
 
 
@@ -303,10 +305,10 @@ def _group_has_pending_tasks(group_id: str) -> bool:
     return False
 
 
-async def _acquire_group_proxy(group_id: str, country: str, city: str, *, task_id: Optional[str] = None) -> tuple[str, str]:
+async def _acquire_group_proxy(group_id: str, country: str, city: Optional[str], *, task_id: Optional[str] = None) -> tuple[str, str]:
     location_key = _group_location_key(country, city)
     if location_key is None:
-        raise ValueError("Group proxy acquisition requires both country and city")
+        raise ValueError("Group proxy acquisition requires country")
 
     async with _group_lock:
         state = _group_states.get(group_id)
@@ -321,9 +323,9 @@ async def _acquire_group_proxy(group_id: str, country: str, city: str, *, task_i
             log_info(f"[VPN-GROUP] Reusing proxy for group {group_id} at {location_key} (active={state['active']})")
             return state["proxy_url"], state["container_id"]
 
-    proxy_url, container_id = await _create_gluetun_proxy(country, city)
+    proxy_url, container_id = await _create_gluetun_proxy(country, city or "")
     if not proxy_url or not container_id:
-        raise Exception(f"Failed to create gluetun proxy for group {group_id} ({country}/{city})")
+        raise Exception(f"Failed to create gluetun proxy for group {group_id} ({country}/{city or 'random'})")
 
     async with _group_lock:
         # Another coroutine might have populated state while we awaited proxy creation.
@@ -550,10 +552,9 @@ class ScreenshotRequest(BaseModel):
     
     @validator('vpn_city')
     def validate_vpn_location(cls, v, values):
-        # If one VPN field is provided, both must be provided
-        if values.get('vpn_country') is not None or v is not None:
-            if values.get('vpn_country') is None or v is None:
-                raise ValueError("Both vpn_country and vpn_city must be provided together")
+        # If vpn_city is provided, vpn_country must also be provided.
+        if v is not None and values.get('vpn_country') is None:
+            raise ValueError("vpn_country must be provided if vpn_city is specified")
         return v
 
 class RecordingRequest(BaseModel):
@@ -588,10 +589,9 @@ class RecordingRequest(BaseModel):
     
     @validator('vpn_city')
     def validate_vpn_location(cls, v, values):
-        # If one VPN field is provided, both must be provided
-        if values.get('vpn_country') is not None or v is not None:
-            if values.get('vpn_country') is None or v is None:
-                raise ValueError("Both vpn_country and vpn_city must be provided together")
+        # If vpn_city is provided, vpn_country must also be provided.
+        if v is not None and values.get('vpn_country') is None:
+            raise ValueError("vpn_country must be provided if vpn_city is specified")
         return v
 
 # --- Queue & Task Models ---
@@ -823,14 +823,17 @@ async def _shutdown_queue_worker():
 
 # --- Helper Functions ---
 
-async def _get_or_create_shared_proxy(country: str, city: str) -> tuple[Optional[str], Optional[str], str]:
+async def _get_or_create_shared_proxy(country: str, city: Optional[str]) -> tuple[Optional[str], Optional[str], str]:
     """
     Get or create a shared gluetun proxy for the given VPN location.
     Returns (proxy_url, container_id, location_key) where location_key should be used to release the proxy.
     If proxy already exists, reuses it and increments ref count.
     If proxy doesn't exist, creates a new one with ref_count=1.
     """
-    location_key = f"{country}/{city}"
+    if not city:
+        location_key = f"{country}/_random_"
+    else:
+        location_key = f"{country}/{city}"
     
     async with _proxy_manager_lock:
         if location_key in _shared_proxy_manager:
@@ -850,7 +853,7 @@ async def _get_or_create_shared_proxy(country: str, city: str) -> tuple[Optional
         else:
             # Create new proxy
             log_info(f"[VPN] Creating new shared proxy for {location_key}")
-            proxy_url, container_id = await _create_gluetun_proxy(country, city)
+            proxy_url, container_id = await _create_gluetun_proxy(country, city or "")
             if not proxy_url or not container_id:
                 return None, None, None
             
@@ -887,36 +890,43 @@ async def _create_gluetun_proxy(country: str, city: str) -> tuple[Optional[str],
                 data = await response.json()
                 container_id = data.get("id")
                 proxy_url = data.get("proxy")
+                service_url = data.get("service_url")
                 
                 if not container_id or not proxy_url:
                     log_warning(f"Invalid response from gluetun API: {data}")
                     return None, None
                 
-                # Parse proxy URL: http://username:password@localhost:port
-                # For Docker containers, we need to access the gluetun container directly
-                # The gluetun container name is gluetun-{container_id}
-                # We need to replace localhost with the container name, but preserve credentials
-                parsed = urlparse(proxy_url)
-                container_name = f"gluetun-{container_id}"
-                
-                # Construct proxy URL accessible from Docker network
-                # Use the container name instead of localhost
-                # Port 8888 is the internal port in the gluetun container
-                # Preserve username and password from original URL
-                netloc = f"{container_name}:8888"
-                if parsed.username and parsed.password:
-                    netloc = f"{parsed.username}:{parsed.password}@{netloc}"
-                elif parsed.username:
-                    netloc = f"{parsed.username}@{netloc}"
-                
-                proxy_for_docker = urlunparse((
-                    parsed.scheme,
-                    netloc,  # Include credentials and container name
-                    parsed.path,
-                    parsed.params,
-                    parsed.query,
-                    parsed.fragment
-                ))
+                # If we are in Kubernetes (indicated by service_url being present),
+                # use the service URL directly as it provides a stable DNS name.
+                if service_url:
+                    log_info(f"[VPN] Using Kubernetes service URL: {service_url}")
+                    proxy_for_docker = service_url
+                else:
+                    # Parse proxy URL: http://username:password@localhost:port
+                    # For Docker containers, we need to access the gluetun container directly
+                    # The gluetun container name is gluetun-{container_id}
+                    # We need to replace localhost with the container name, but preserve credentials
+                    parsed = urlparse(proxy_url)
+                    container_name = f"gluetun-{container_id}"
+                    
+                    # Construct proxy URL accessible from Docker network
+                    # Use the container name instead of localhost
+                    # Port 8888 is the internal port in the gluetun container
+                    # Preserve username and password from original URL
+                    netloc = f"{container_name}:8888"
+                    if parsed.username and parsed.password:
+                        netloc = f"{parsed.username}:{parsed.password}@{netloc}"
+                    elif parsed.username:
+                        netloc = f"{parsed.username}@{netloc}"
+                    
+                    proxy_for_docker = urlunparse((
+                        parsed.scheme,
+                        netloc,  # Include credentials and container name
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment
+                    ))
                 
                 # Parse proxy config for logging
                 proxy_config_for_log = _parse_proxy_for_playwright(proxy_for_docker)
@@ -2090,12 +2100,12 @@ async def _obtain_vpn_proxy_for_request(
     city = getattr(request_model, "vpn_city", None)
     group_id = getattr(request_model, "group_id", None)
 
-    if not country or not city:
+    if not country:
         return None, None, None, None, group_id
 
     if progress_cb:
         try:
-            await progress_cb("creating_proxy", {"country": country, "city": city})
+            await progress_cb("creating_proxy", {"country": country, "city": city or "random"})
         except Exception:
             pass
 
@@ -2114,7 +2124,7 @@ async def _obtain_vpn_proxy_for_request(
 
     proxy_url, container_id, location_key = await _get_or_create_shared_proxy(country, city)
     if not proxy_url or not location_key:
-        raise Exception(f"Failed to create gluetun proxy for {country}/{city}")
+        raise Exception(f"Failed to create gluetun proxy for {country}/{city or 'random'}")
 
     async def release_shared() -> None:
         await _release_shared_proxy(location_key)

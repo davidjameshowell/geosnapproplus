@@ -572,9 +572,9 @@ def start_gluetun():
                 error_msg += f" for city '{city_filter}'"
             return jsonify({"error": error_msg}), 400
         
-        # Use the first matching server (you could also randomize this)
-        server_name = matching_servers[0]
-        logger.info(f"Selected server '{server_name}' from {len(matching_servers)} matching servers "
+        # Select a random server from the matching list
+        server_name = random.choice(matching_servers)
+        logger.info(f"Selected random server '{server_name}' from {len(matching_servers)} matching servers "
                    f"(country: {country_filter or 'any'}, city: {city_filter or 'any'})")
     else:
         return jsonify({"error": "Must provide either 'server' or 'country'/'city' parameters"}), 400
