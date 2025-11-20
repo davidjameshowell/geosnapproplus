@@ -1,0 +1,17 @@
+{{- if and .Values.frontend.enabled .Values.frontend.mediaVolume.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "geosnappro.frontend.fullname" . }}-media
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.frontend.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.frontend.mediaVolume.accessMode }}
+  storageClassName: {{ .Values.frontend.mediaVolume.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.frontend.mediaVolume.size | quote }}
+{{- end }}
+

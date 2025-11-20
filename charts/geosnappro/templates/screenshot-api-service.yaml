@@ -1,0 +1,19 @@
+{{- if .Values.screenshotApi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "geosnappro.screenshotApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.screenshotApi.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.screenshotApi.service.type }}
+  selector:
+    {{- include "geosnappro.screenshotApi.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.screenshotApi.service.port }}
+      targetPort: {{ .Values.screenshotApi.service.targetPort }}
+{{- end }}
+

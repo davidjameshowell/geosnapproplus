@@ -1,0 +1,52 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gluetun-k8s-api
+  namespace: gluetun-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gluetun-k8s-api
+  namespace: gluetun-system
+rules:
+  # Permissions for managing pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch"]
+  # Permissions for reading pod logs
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  # Permissions for executing commands inside pods (used to read servers.json)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  # Permissions for managing services for proxy exposure
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # Permissions for managing jobs (for server list fetching)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # Permissions for reading job status
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gluetun-k8s-api
+  namespace: gluetun-system
+subjects:
+  - kind: ServiceAccount
+    name: gluetun-k8s-api
+    namespace: gluetun-system
+roleRef:
+  kind: Role
+  name: gluetun-k8s-api
+  apiGroup: rbac.authorization.k8s.io
+

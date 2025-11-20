@@ -381,6 +381,16 @@
                                 Page Load & Timing
                             </h4>
                             
+                            <div class="mb-4">
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" name="dismiss_popups" value="true" checked class="mr-3 w-4 h-4 text-blue-600 rounded">
+                                    <div>
+                                        <span class="text-sm font-medium text-gray-900">Dismiss Popups</span>
+                                        <p class="text-xs text-gray-600 mt-0.5">Attempt to close cookie banners and overlays automatically</p>
+                                    </div>
+                                </label>
+                            </div>
+
                             {% if flags.wait_until %}
                             <div class="mb-4">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Wait Until</label>
@@ -495,7 +505,8 @@
 {% block scripts %}
 <script>
     // Configuration
-    const GLUETUN_API_URL = '{{ gluetun_api_url }}';
+    const GLUETUN_SERVERS_URL = '{{ gluetun_servers_url }}';
+    const GLUETUN_LOCATIONS_URL = '{{ gluetun_locations_url }}';
     
     // Location data
     let locationsData = null;
@@ -599,7 +610,7 @@
         locationError.classList.add('hidden');
         
         try {
-            const response = await fetch(`${GLUETUN_API_URL}/locations`);
+            const response = await fetch(GLUETUN_LOCATIONS_URL);
             if (!response.ok) {
                 throw new Error(`Failed to load locations: ${response.statusText}`);
             }
@@ -737,6 +748,8 @@
             if (ua) ua.value = '';
             if (full) full.checked = false;
             if (imageType) imageType.value = 'png';
+            const dp = document.querySelector('input[name="dismiss_popups"]');
+            if (dp) dp.checked = true;
         } else if (value === 'desktop_full') {
             vw.value = 1920;
             vh.value = 1080;
@@ -872,7 +885,7 @@
             
             if (value && value !== '') {
                 // Convert checkboxes to booleans
-                if (['headless', 'full_page', 'scroll_enabled', 'scroll_up_after', 'camoufox_fallback'].includes(key)) {
+                if (['headless', 'full_page', 'scroll_enabled', 'scroll_up_after', 'camoufox_fallback', 'dismiss_popups'].includes(key)) {
                     payload[key] = value === 'true';
                 }
                 // Convert numbers

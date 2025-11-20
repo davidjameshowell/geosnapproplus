@@ -1,0 +1,59 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your GeoSnappro application has been deployed with the following components:
+
+{{- if .Values.screenshotApi.enabled }}
+1. Screenshot API:
+   - Service: {{ include "geosnappro.screenshotApi.fullname" . }}
+   - Port: {{ .Values.screenshotApi.service.port }}
+   - Type: {{ .Values.screenshotApi.service.type }}
+   {{- if .Values.screenshotApi.ingress.enabled }}
+   - Ingress: Enabled
+   {{- range .Values.screenshotApi.ingress.hosts }}
+     - http{{ if $.Values.screenshotApi.ingress.tls }}s{{ end }}://{{ .host }}
+   {{- end }}
+   {{- end }}
+{{- end }}
+
+{{- if .Values.gluetunApi.enabled }}
+2. Gluetun API:
+   - Service: {{ include "geosnappro.gluetunApi.fullname" . }}
+   - Port: {{ .Values.gluetunApi.service.port }}
+   - Type: {{ .Values.gluetunApi.service.type }}
+   - Instance Limit: {{ .Values.gluetunApi.config.instanceLimit }}
+   {{- if .Values.gluetunApi.nodePortService.enabled }}
+   - NodePort: {{ .Values.gluetunApi.nodePortService.nodePort }}
+   {{- end }}
+{{- end }}
+
+{{- if .Values.frontend.enabled }}
+3. Frontend:
+   - Service: {{ include "geosnappro.frontend.fullname" . }}
+   - Port: {{ .Values.frontend.service.port }}
+   - Type: {{ .Values.frontend.service.type }}
+   {{- if .Values.frontend.ingress.enabled }}
+   - Ingress: Enabled
+   {{- range .Values.frontend.ingress.hosts }}
+     - http{{ if $.Values.frontend.ingress.tls }}s{{ end }}://{{ .host }}
+   {{- end }}
+   {{- else }}
+   
+   To access the frontend, run:
+     kubectl port-forward svc/{{ include "geosnappro.frontend.fullname" . }} 5000:{{ .Values.frontend.service.port }} -n {{ .Release.Namespace }}
+   
+   Then visit: http://localhost:5000
+   {{- end }}
+{{- end }}
+
+{{ if .Values.frontend.mediaVolume.enabled }}
+Storage:
+  - Media PVC: {{ include "geosnappro.frontend.fullname" . }}-media ({{ .Values.frontend.mediaVolume.size }})
+{{- end }}
+
+For more information:
+  - Documentation: https://github.com/geosnappro/geosnappro
+  - Get pod status: kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+  - View logs: kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} --all-containers=true
+
+Happy screenshotting! 📸
+

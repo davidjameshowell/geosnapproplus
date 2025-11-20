@@ -1,0 +1,43 @@
+{{- if and .Values.screenshotApi.enabled .Values.screenshotApi.ingress.enabled }}
+{{- $fullName := include "geosnappro.screenshotApi.fullname" . }}
+{{- $svcPort := .Values.screenshotApi.service.port }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.screenshotApi.labels" . | nindent 4 }}
+  {{- if .Values.screenshotApi.ingress.annotations }}
+  annotations:
+    {{- toYaml .Values.screenshotApi.ingress.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.screenshotApi.ingress.className }}
+  ingressClassName: {{ .Values.screenshotApi.ingress.className }}
+  {{- end }}
+  rules:
+    {{- range .Values.screenshotApi.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $svcPort }}
+          {{- end }}
+    {{- end }}
+  {{- if .Values.screenshotApi.ingress.tls }}
+  tls:
+    {{- range .Values.screenshotApi.ingress.tls }}
+    - hosts:
+        {{- toYaml .hosts | nindent 8 }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+

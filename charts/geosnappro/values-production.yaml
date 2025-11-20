@@ -1,0 +1,137 @@
+# Production values for geosnappro
+# This is an example production configuration
+
+global:
+  imagePullSecrets: []
+
+screenshotApi:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: your-registry.example.com/screenshot-api
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    hosts:
+      - host: api.geosnappro.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: screenshot-api-tls
+        hosts:
+          - api.geosnappro.example.com
+
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  env:
+    PYTHONUNBUFFERED: "1"
+    LOG_LEVEL: "INFO"
+    VPN_SHARED_PROXY_IDLE_TTL_SECONDS: "300"
+    RATE_LIMIT_WINDOW_SECONDS: "60"
+    RATE_LIMIT_MAX_REQUESTS: "100"
+
+gluetunApi:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: your-registry.example.com/gluetun-k8s-api
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  config:
+    instanceLimit: 10
+    logLevel: "INFO"
+    pythonUnbuffered: "1"
+    firewallInputPorts: "8888"
+
+  wireguard:
+    # IMPORTANT: Replace with your actual credentials or use a separate secret
+    privateKey: "YOUR_WIREGUARD_PRIVATE_KEY"
+    addresses: "YOUR_WIREGUARD_ADDRESSES"
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+frontend:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: your-registry.example.com/frontend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 5000
+
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    hosts:
+      - host: geosnappro.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: frontend-tls
+        hosts:
+          - geosnappro.example.com
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  env:
+    BACKEND_URL: "http://screenshot-api:8000"
+    BACKEND_WS_PUBLIC_URL: "wss://geosnappro.example.com/ws"
+    GLUETUN_API_URL: "http://gluetun-api:8001"
+    DEBUG: "false"
+    PORT: "5000"
+    POLL_INTERVAL_SECONDS: "5"
+    MEDIA_DIR: "/app/media"
+
+  mediaVolume:
+    enabled: true
+    storageClass: "fast-ssd"
+    accessMode: ReadWriteOnce
+    size: 20Gi
+

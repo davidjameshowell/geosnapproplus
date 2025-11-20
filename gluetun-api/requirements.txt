@@ -1,4 +1,0 @@
-Flask
-flask-cors
-docker
-requests

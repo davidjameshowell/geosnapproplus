@@ -1,0 +1,45 @@
+{{- if and .Values.gluetunApi.enabled .Values.gluetunApi.rbac.create .Values.gluetunApi.serviceAccount.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.gluetunApi.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.gluetunApi.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "geosnappro.gluetunApi.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+

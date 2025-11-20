@@ -1,4 +1,6 @@
 from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, send_from_directory, session
+from flask_sock import Sock
+from websocket import create_connection
 import requests
 from datetime import datetime
 import uuid
@@ -14,6 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 app = Flask(__name__)
+sock = Sock(app)
 # Configure session secret key (use environment variable or generate one)
 app.secret_key = os.getenv("SECRET_KEY", os.urandom(24).hex())
 # Session cookie settings
@@ -46,6 +49,7 @@ FEATURE_FLAGS = {
     'scroll_speed': True,
     'scroll_up_after': True,
     'scroll_timeout': True,
+    'dismiss_popups': True,
 }
 
 # Backend API configuration (env-driven)
@@ -63,7 +67,21 @@ tasks_lock = threading.Lock()
 
 # Create directory for storing media files (env-driven)
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "media"))
-MEDIA_DIR.mkdir(exist_ok=True)
+try:
+    MEDIA_DIR.mkdir(exist_ok=True, parents=True)
+    # Test write permissions
+    test_file = MEDIA_DIR / ".write_test"
+    test_file.touch()
+    test_file.unlink()
+    logger.info(f"Media directory initialized successfully at {MEDIA_DIR}")
+except PermissionError as e:
+    logger.error(f"Permission denied when creating or writing to media directory {MEDIA_DIR}: {e}")
+    logger.error(f"Current user: {os.getuid() if hasattr(os, 'getuid') else 'unknown'}")
+    logger.error(f"Directory permissions: {oct(MEDIA_DIR.stat().st_mode) if MEDIA_DIR.exists() else 'directory does not exist'}")
+    raise
+except Exception as e:
+    logger.error(f"Failed to initialize media directory {MEDIA_DIR}: {e}")
+    raise
 
 # HTTP session with retries
 http = requests.Session()
@@ -110,6 +128,48 @@ def _safe_media_path(filename):
         return None
 
 
+def _gluetun_url(path: str) -> str:
+    base = GLUETUN_API_URL.rstrip("/")
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{base}{path}"
+
+
+def _proxy_gluetun_json(path: str, description: str):
+    url = _gluetun_url(path)
+    try:
+        response = http.get(url, timeout=(5, 30))
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        status_code = exc.response.status_code if getattr(exc, "response", None) is not None else 502
+        payload = None
+        if getattr(exc, "response", None) is not None:
+            try:
+                payload = exc.response.json()
+            except ValueError:
+                payload = {"message": (exc.response.text or "")[:200]}
+        logger.warning("Gluetun API responded with HTTP %s for %s", status_code, url)
+        return jsonify({
+            "error": f"{description} request failed",
+            "status": status_code,
+            "details": payload,
+        }), status_code
+    except requests.exceptions.RequestException as exc:
+        logger.warning("Failed to reach Gluetun API at %s: %s", url, exc)
+        return jsonify({
+            "error": f"Unable to reach Gluetun API for {description}",
+            "details": str(exc),
+        }), 502
+
+    try:
+        data = response.json()
+    except ValueError:
+        logger.warning("Gluetun API returned non-JSON payload for %s", url)
+        return jsonify({"error": "Invalid JSON received from Gluetun API"}), 502
+
+    return jsonify(data)
+
+
 def _get_session_id():
     """
     Get or create a session ID for the current user.
@@ -139,7 +199,12 @@ def index():
 
 @app.route('/submit')
 def submit():
-    return render_template('submit.html', flags=FEATURE_FLAGS, gluetun_api_url=GLUETUN_API_URL)
+    return render_template(
+        'submit.html',
+        flags=FEATURE_FLAGS,
+        gluetun_locations_url=url_for('proxy_gluetun_locations'),
+        gluetun_servers_url=url_for('proxy_gluetun_servers'),
+    )
 
 
 @app.route('/tasks')
@@ -315,6 +380,75 @@ def serve_media(filename):
     if not safe_path or not safe_path.exists():
         return "File not found", 404
     return send_from_directory(str(MEDIA_DIR), filename, conditional=True, max_age=MEDIA_CACHE_MAX_AGE)
+
+
+@app.route('/api/gluetun/servers', methods=['GET'])
+def proxy_gluetun_servers():
+    """Expose the Gluetun server list through the frontend."""
+    return _proxy_gluetun_json("/servers", "Server list")
+
+
+@app.route('/api/gluetun/locations', methods=['GET'])
+def proxy_gluetun_locations():
+    """Expose Gluetun location metadata through the frontend."""
+    return _proxy_gluetun_json("/locations", "Location list")
+
+
+@sock.route('/ws/tasks/<task_id>')
+def proxy_task_ws(ws, task_id):
+    # Derive backend WS URL from BACKEND_URL
+    backend_ws_url = BACKEND_URL.replace('http://', 'ws://').replace('https://', 'wss://')
+    target_url = f"{backend_ws_url}/ws/tasks/{task_id}"
+    
+    try:
+        # Connect to backend
+        backend_ws = create_connection(target_url, timeout=5)
+    except Exception as e:
+        logger.error(f"Failed to connect to backend WS {target_url}: {e}")
+        try:
+            ws.close()
+        except:
+            pass
+        return
+
+    # Bridge threads
+    def forward_backend_to_client():
+        try:
+            while True:
+                data = backend_ws.recv()
+                if not data:
+                    break
+                try:
+                    ws.send(data)
+                except Exception:
+                    break
+        except Exception:
+            pass
+        finally:
+            try:
+                ws.close()
+            except:
+                pass
+
+    t = threading.Thread(target=forward_backend_to_client, daemon=True)
+    t.start()
+
+    try:
+        while True:
+            data = ws.receive()
+            if not data:
+                break
+            try:
+                backend_ws.send(data)
+            except Exception:
+                break
+    except Exception:
+        pass
+    finally:
+        try:
+            backend_ws.close()
+        except:
+            pass
 
 
 if __name__ == '__main__':

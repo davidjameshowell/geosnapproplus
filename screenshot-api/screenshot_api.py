@@ -45,31 +45,13 @@ try:
 except Exception:
     pass
 
-# Bridge helpers to also emit via access loggers so messages are visible alongside access logs
-_access_loggers = [logging.getLogger("uvicorn.access"), logging.getLogger("hypercorn.access")]
-
 def log_info(message: str) -> None:
-    try:
-        for _lg in _access_loggers:
-            _lg.info(message)
-    except Exception:
-        pass
     logger.info(message)
 
 def log_warning(message: str) -> None:
-    try:
-        for _lg in _access_loggers:
-            _lg.warning(message)
-    except Exception:
-        pass
     logger.warning(message)
 
 def log_error(message: str) -> None:
-    try:
-        for _lg in _access_loggers:
-            _lg.error(message)
-    except Exception:
-        pass
     logger.error(message)
 
 # Default settings for API parameters

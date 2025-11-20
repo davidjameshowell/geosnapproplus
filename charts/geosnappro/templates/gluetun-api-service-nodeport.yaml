@@ -1,0 +1,20 @@
+{{- if and .Values.gluetunApi.enabled .Values.gluetunApi.nodePortService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}-nodeport
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.gluetunApi.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  selector:
+    {{- include "geosnappro.gluetunApi.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.gluetunApi.nodePortService.port }}
+      targetPort: http
+      nodePort: {{ .Values.gluetunApi.nodePortService.nodePort }}
+      protocol: TCP
+{{- end }}
+

@@ -1,0 +1,138 @@
+{{- if .Values.gluetunApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "geosnappro.gluetunApi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geosnappro.gluetunApi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gluetunApi.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "geosnappro.gluetunApi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "geosnappro.gluetunApi.selectorLabels" . | nindent 8 }}
+        {{- if .Values.gluetunApi.podLabels }}
+        {{- toYaml .Values.gluetunApi.podLabels | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.gluetunApi.podAnnotations }}
+        {{- toYaml .Values.gluetunApi.podAnnotations | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "geosnappro.gluetunApi.serviceAccountName" . }}
+      {{- if .Values.gluetunApi.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.gluetunApi.podSecurityContext | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.gluetunApi.image.repository }}:{{ .Values.gluetunApi.image.tag }}"
+          imagePullPolicy: {{ .Values.gluetunApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          env:
+            - name: K8S_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: K8S_NAMESPACE
+            - name: INSTANCE_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: INSTANCE_LIMIT
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: PYTHONUNBUFFERED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: PYTHONUNBUFFERED
+            - name: SERVERS_FILE_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: SERVERS_FILE_PATH
+            - name: SERVERS_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: SERVERS_JSON
+            - name: FIREWALL_INPUT_PORTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "geosnappro.gluetunApi.fullname" . }}-config
+                  key: FIREWALL_INPUT_PORTS
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gluetunApi.wireguardSecret.name }}
+                  key: {{ .Values.gluetunApi.wireguardSecret.privateKeyKey }}
+            - name: WIREGUARD_ADDRESSES
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gluetunApi.wireguardSecret.name }}
+                  key: {{ .Values.gluetunApi.wireguardSecret.addressesKey }}
+            {{- range .Values.gluetunApi.extraEnv }}
+            - {{- toYaml . | nindent 14 }}
+            {{- end }}
+          {{- if .Values.gluetunApi.securityContext }}
+          securityContext:
+            {{- toYaml .Values.gluetunApi.securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .Values.gluetunApi.resources }}
+          resources:
+            {{- toYaml .Values.gluetunApi.resources | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- if .Values.gluetunApi.config.preloadedServersConfigMap }}
+          volumeMounts:
+            - name: preloaded-server-list
+              mountPath: /data/server-list
+              readOnly: true
+          {{- end }}
+      {{- if .Values.gluetunApi.config.preloadedServersConfigMap }}
+      volumes:
+        - name: preloaded-server-list
+          configMap:
+            name: {{ .Values.gluetunApi.config.preloadedServersConfigMap }}
+            optional: true
+      {{- end }}
+      {{- if .Values.gluetunApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.gluetunApi.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.gluetunApi.affinity }}
+      affinity:
+        {{- toYaml .Values.gluetunApi.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.gluetunApi.tolerations }}
+      tolerations:
+        {{- toYaml .Values.gluetunApi.tolerations | nindent 8 }}
+      {{- end }}
+{{- end }}
+
