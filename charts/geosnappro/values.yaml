@@ -3,7 +3,8 @@
 
 global:
   namespace: ""
-  imagePullSecrets: []
+  imagePullSecrets:
+    - name: ghcr-creds-regcred
 
 # Screenshot API Configuration
 screenshotApi:

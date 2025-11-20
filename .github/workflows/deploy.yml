@@ -131,7 +131,7 @@ jobs:
           helm upgrade --install geosnappro ./charts/geosnappro \
             --namespace geosnappro \
             --create-namespace \
-            --set global.imagePullSecrets[0].name=ghcr-secret \
+            --set global.imagePullSecrets[0].name=ghcr-creds-regcred \
             --set frontend.image.tag=sha-${{ github.sha }} \
             --set screenshotApi.image.tag=sha-${{ github.sha }} \
             --set gluetunApi.image.tag=sha-${{ github.sha }} \
