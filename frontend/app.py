@@ -396,13 +396,16 @@ def proxy_gluetun_locations():
 
 @sock.route('/ws/tasks/<task_id>')
 def proxy_task_ws(ws, task_id):
+    logger.info(f"WS: Client connected for task {task_id}")
     # Derive backend WS URL from BACKEND_URL
     backend_ws_url = BACKEND_URL.replace('http://', 'ws://').replace('https://', 'wss://')
     target_url = f"{backend_ws_url}/ws/tasks/{task_id}"
     
     try:
         # Connect to backend
+        logger.info(f"WS: Connecting to backend {target_url}")
         backend_ws = create_connection(target_url, timeout=5)
+        logger.info(f"WS: Connected to backend for task {task_id}")
     except Exception as e:
         logger.error(f"Failed to connect to backend WS {target_url}: {e}")
         try:
@@ -413,22 +416,27 @@ def proxy_task_ws(ws, task_id):
 
     # Bridge threads
     def forward_backend_to_client():
+        logger.info(f"WS: Starting backend->client forwarder for {task_id}")
         try:
             while True:
                 data = backend_ws.recv()
                 if not data:
+                    logger.info(f"WS: Backend closed connection for {task_id}")
                     break
                 try:
                     ws.send(data)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"WS: Failed to send to client: {e}")
                     break
-        except Exception:
+        except Exception as e:
+            logger.warning(f"WS: Error reading from backend: {e}")
             pass
         finally:
             try:
                 ws.close()
             except:
                 pass
+            logger.info(f"WS: Backend->client forwarder ended for {task_id}")
 
     t = threading.Thread(target=forward_backend_to_client, daemon=True)
     t.start()
@@ -437,18 +445,22 @@ def proxy_task_ws(ws, task_id):
         while True:
             data = ws.receive()
             if not data:
+                logger.info(f"WS: Client disconnected for {task_id}")
                 break
             try:
                 backend_ws.send(data)
             except Exception:
                 break
-    except Exception:
+    except Exception as e:
+        logger.warning(f"WS: Client loop error: {e}")
         pass
     finally:
         try:
             backend_ws.close()
         except:
             pass
+        logger.info(f"WS: Connection handler ended for {task_id}")
+
 
 
 if __name__ == '__main__':

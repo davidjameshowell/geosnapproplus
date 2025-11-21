@@ -8,7 +8,8 @@ WORKDIR /app
 
 # Install dependencies
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt && \
+    pip install --no-cache-dir gevent
 
 # Copy application code
 COPY . /app
@@ -31,5 +32,5 @@ USER appuser
 
 EXPOSE 5000
 
-# Run with gunicorn (single worker to keep in-memory state consistent)
-CMD ["gunicorn", "--workers", "1", "--threads", "4", "--timeout", "120", "--bind", "0.0.0.0:5000", "app:app"]
+# Run with gunicorn using gthread (compatible with flask-sock and standard threads)
+CMD ["gunicorn", "--workers", "1", "--threads", "10", "--timeout", "120", "--bind", "0.0.0.0:5000", "app:app"]

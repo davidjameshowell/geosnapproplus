@@ -601,42 +601,104 @@
     // Format absolute times once on load
     updateAbsoluteTimes();
 
-    // WebSocket Updates
+    // WebSocket Updates & Polling
     const autoRefresh = document.getElementById('autoRefresh');
     const tasks = Array.from(document.querySelectorAll('.task-card')).map(el => ({ id: el.dataset.taskId, status: el.dataset.status }));
     const wsConnections = {};
+    const monitorIntervals = {};
 
-    function setupWebSocket(taskId) {
+    function monitorTask(taskId) {
         if (!autoRefresh.checked) return;
         
-        const wsUrl = (function() {
-            const publicBase = "{{ backend_ws_public_url|default('', true) }}";
-            if (publicBase) {
-                const base = publicBase.replace(/\/$/, '');
-                return `${base}/ws/tasks/${taskId}`;
-            }
-            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            const host = location.hostname + ':8000';
-            return `${proto}://${host}/ws/tasks/${taskId}`;
-        })();
-        const ws = new WebSocket(wsUrl);
-        
-        wsConnections[taskId] = ws;
-        
-        ws.onmessage = (evt) => {
-            try {
-                const data = JSON.parse(evt.data);
-                if (data && data.task_id === taskId && data.status) {
-                    updateTaskStatus(taskId, data.status);
+        // Setup WebSocket if not exists
+        if (!wsConnections[taskId]) {
+            const wsUrl = (function() {
+                const publicBase = "{{ backend_ws_public_url|default('', true) }}";
+                if (publicBase) {
+                    const base = publicBase.replace(/\/$/, '');
+                    return `${base}/ws/tasks/${taskId}`;
                 }
+                const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+                // Use the same host/port as the page is served from
+                const host = location.host;
+                return `${proto}://${host}/ws/tasks/${taskId}`;
+            })();
+            
+            try {
+                const ws = new WebSocket(wsUrl);
+                wsConnections[taskId] = ws;
+                
+                ws.onopen = () => {
+                    // If polling was active, stop it because WS is now connected
+                    if (monitorIntervals[taskId]) {
+                        clearInterval(monitorIntervals[taskId]);
+                        delete monitorIntervals[taskId];
+                    }
+                };
+
+                ws.onmessage = (evt) => {
+                    try {
+                        const data = JSON.parse(evt.data);
+                        if (data && data.task_id === taskId && data.status) {
+                            updateTaskStatus(taskId, data.status);
+                        }
+                    } catch (e) {
+                        console.error('WebSocket message error:', e);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    // Fallback to polling on error
+                    startPollingForTask(taskId);
+                };
+
+                ws.onclose = () => {
+                    // Fallback to polling on close if not finished
+                    // We check status inside startPollingForTask to be safe
+                    startPollingForTask(taskId);
+                };
+
             } catch (e) {
-                console.error('WebSocket message error:', e);
+                console.warn('WebSocket setup failed:', e);
+                startPollingForTask(taskId);
             }
-        };
+        }
         
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+        // We do NOT start polling immediately here anymore.
+        // Only if WS fails or takes too long (optional safety timeout could be added, 
+        // but 'onerror' usually covers connection refusal).
+        
+        // Add a safety check: if WS state is not OPEN/CONNECTING after 3s, start polling
+        setTimeout(() => {
+            const ws = wsConnections[taskId];
+            if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) {
+                startPollingForTask(taskId);
+            }
+        }, 3000);
+    }
+
+    function startPollingForTask(taskId) {
+        // Avoid duplicates
+        if (monitorIntervals[taskId]) return;
+
+        // Only poll if we really need to (task is not terminal)
+        const card = document.querySelector(`[data-task-id="${taskId}"]`);
+        if (card) {
+            const status = card.dataset.status;
+            if (status === 'completed' || status === 'failed') return;
+        }
+
+        monitorIntervals[taskId] = setInterval(() => {
+            fetch(`/api/task/${taskId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data && data.task && data.task.status) {
+                        updateTaskStatus(taskId, data.task.status);
+                    }
+                })
+                .catch(e => console.error("Polling error:", e));
+        }, 5000); // Poll every 5 seconds
     }
 
     function updateTaskStatus(taskId, newStatus) {
@@ -700,20 +762,25 @@
             }
         }
 
-        // Close websocket for terminal states
+        // Close websocket and polling for terminal states
         if (newStatus === 'completed' || newStatus === 'failed') {
             const ws = wsConnections[taskId];
             if (ws) {
                 try { ws.close(); } catch (e) {}
                 delete wsConnections[taskId];
             }
+            
+            if (monitorIntervals[taskId]) {
+                clearInterval(monitorIntervals[taskId]);
+                delete monitorIntervals[taskId];
+            }
         }
     }
 
-    // Initialize WebSocket connections
+    // Initialize Monitoring
     tasks.forEach(task => {
         if (task.status === 'running' || task.status === 'pending' || task.status === 'queued') {
-            setupWebSocket(task.id);
+            monitorTask(task.id);
         }
     });
 
@@ -748,13 +815,17 @@
     autoRefresh.addEventListener('change', (e) => {
         if (e.target.checked) {
             tasks.forEach(task => {
-                if ((task.status === 'running' || task.status === 'pending' || task.status === 'queued') && !wsConnections[task.id]) {
-                    setupWebSocket(task.id);
+                if (task.status === 'running' || task.status === 'pending' || task.status === 'queued') {
+                    monitorTask(task.id);
                 }
             });
         } else {
+            // Close all
             Object.values(wsConnections).forEach(ws => ws.close());
             Object.keys(wsConnections).forEach(key => delete wsConnections[key]);
+            
+            Object.values(monitorIntervals).forEach(iv => clearInterval(iv));
+            Object.keys(monitorIntervals).forEach(key => delete monitorIntervals[key]);
         }
     });
 

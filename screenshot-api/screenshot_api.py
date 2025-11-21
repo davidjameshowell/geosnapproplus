@@ -78,34 +78,53 @@ DEFAULT_SETTINGS = {
 }
 
 POPUP_CLOSE_TEXT_PATTERNS = (
-    re.compile(r"\\bclose\\b", re.I),
-    re.compile(r"\\bdismiss\\b", re.I),
-    re.compile(r"\\bno,? thanks\\b", re.I),
-    re.compile(r"\\bno thanks\\b", re.I),
-    re.compile(r"\\bgot it\\b", re.I),
-    re.compile(r"\\baccept\\b", re.I),
-    re.compile(r"\\bi agree\\b", re.I),
-    re.compile(r"\\bcontinue\\b", re.I),
-    re.compile(r"\\ballow\\b", re.I),
-    re.compile(r"\\bok\\b", re.I),
+    re.compile(r"\bclose\b", re.I),
+    re.compile(r"\bdismiss\b", re.I),
+    re.compile(r"\bno,? thanks\b", re.I),
+    re.compile(r"\bno thanks\b", re.I),
+    re.compile(r"\bgot it\b", re.I),
+    re.compile(r"\baccept\b", re.I),
+    re.compile(r"\baccept all\b", re.I),
+    re.compile(r"\baccept cookies\b", re.I),
+    re.compile(r"\bconsent\b", re.I),
+    re.compile(r"\bagree\b", re.I),
+    re.compile(r"\bi agree\b", re.I),
+    re.compile(r"\bcontinue\b", re.I),
+    re.compile(r"\ballow\b", re.I),
+    re.compile(r"\bok\b", re.I),
 )
 
 POPUP_CLICKABLE_SELECTORS = (
     '[aria-label*="close" i]',
     '[aria-label*="dismiss" i]',
+    '[aria-label*="accept" i]',
+    '[aria-label*="agree" i]',
+    '[aria-label*="consent" i]',
     '[aria-label*="no thanks" i]',
     '[data-testid*="close" i]',
     '[data-testid*="dismiss" i]',
+    '[data-testid*="accept" i]',
+    '[data-testid*="agree" i]',
+    '[data-testid*="consent" i]',
     '[data-test*="close" i]',
     '[data-test*="dismiss" i]',
+    '[data-test*="accept" i]',
+    '[data-test*="agree" i]',
+    '[data-test*="consent" i]',
     '[class*="close-button" i]',
     '[class*="close-icon" i]',
     '[class*="close-btn" i]',
     '[class*="modal-close" i]',
     '[class*="popup-close" i]',
+    '[class*="accept" i]',
+    '[class*="agree" i]',
+    '[class*="consent" i]',
     '[class*="paywall-close" i]',
     '[id*="close" i]',
     '[id*="dismiss" i]',
+    '[id*="accept" i]',
+    '[id*="agree" i]',
+    '[id*="consent" i]',
     '[role="button"][id*="close" i]',
     '[role="button"][class*="close" i]',
     'button:has-text("×")',
@@ -221,7 +240,8 @@ VPN_SHARED_PROXY_IDLE_TTL_SECONDS = _parse_positive_int(os.getenv("VPN_SHARED_PR
 #   'container_id': str,
 #   'proxy_url': str,
 #   'ref_count': int,
-#   'destroy_task': Optional[asyncio.Task]
+#   'destroy_task': Optional[asyncio.Task],
+#   'destroy_start_time': Optional[float]
 # }
 _shared_proxy_manager: Dict[str, Dict] = {}
 _proxy_manager_lock = asyncio.Lock()
@@ -230,6 +250,37 @@ _group_states: Dict[str, Dict[str, Any]] = {}
 _group_lock = asyncio.Lock()
 
 FINAL_TASK_STATUSES = {"completed", "failed"}
+
+async def _wait_for_idle_proxies_if_needed(country: str, city: Optional[str]):
+    """
+    If the shared proxy for the requested location is idle (ref_count=0) and more than 51% through its TTL,
+    wait for it to be fully destroyed before proceeding.
+    This helps prevent hitting instance limits when a new request comes in just before cleanup.
+    """
+    if VPN_SHARED_PROXY_IDLE_TTL_SECONDS <= 0:
+        return
+
+    if not country:
+        return
+    location_key = f"{country}/{city}" if city else f"{country}/_random_"
+
+    wait_task = None
+    
+    async with _proxy_manager_lock:
+        if location_key in _shared_proxy_manager:
+            info = _shared_proxy_manager[location_key]
+            if info.get('ref_count', 0) == 0 and info.get('destroy_task') and info.get('destroy_start_time'):
+                elapsed = time.time() - info['destroy_start_time']
+                ttl = VPN_SHARED_PROXY_IDLE_TTL_SECONDS
+                
+                # If we are more than 51% through the wait time
+                if elapsed > (ttl * 0.51):
+                    remaining = max(0, ttl - elapsed) + 1.0  # +1s buffer
+                    log_info(f"[VPN] Proxy for {location_key} is {elapsed:.1f}s/{ttl}s idle (>51%). Waiting {remaining:.1f}s for cleanup to avoid instance limit.")
+                    wait_task = asyncio.create_task(asyncio.sleep(remaining))
+    
+    if wait_task:
+        await wait_task
 
 async def _release_shared_proxy(location_key: str):
     """Release a reference to a shared proxy. Decrements ref count and destroys if needed."""
@@ -259,6 +310,7 @@ async def _release_shared_proxy(location_key: str):
                 log_info(f"[VPN] Reference count reached 0 for {location_key}, scheduling destroy in {VPN_SHARED_PROXY_IDLE_TTL_SECONDS}s (container {container_id})")
                 destroy_task = asyncio.create_task(_schedule_proxy_teardown(location_key, container_id))
                 proxy_info['destroy_task'] = destroy_task
+                proxy_info['destroy_start_time'] = time.time()
 
 async def _schedule_proxy_teardown(location_key: str, container_id: str) -> None:
     try:
@@ -862,7 +914,8 @@ async def _get_or_create_shared_proxy(country: str, city: Optional[str]) -> tupl
                 'container_id': container_id,
                 'proxy_url': proxy_url,
                 'ref_count': 1,
-                'destroy_task': None
+                'destroy_task': None,
+                'destroy_start_time': None
             }
             log_info(f"[VPN] Created shared proxy for {location_key} (ref_count=1)")
             return proxy_url, container_id, location_key
@@ -1247,10 +1300,11 @@ async def _capture_raw_recording_in_new_browser(
                     except asyncio.TimeoutError:
                         ip_check_time = (time.time() - ip_check_start) * 1000
                         log_error(f"[VPN-RECORD] IP check timed out after {ip_check_time:.2f}ms")
+                        raise RuntimeError(f"VPN IP check timed out after {ip_check_time:.2f}ms")
                     except Exception as ip_check_error:
                         ip_check_time = (time.time() - ip_check_start) * 1000
                         log_error(f"[VPN-RECORD] IP check failed after {ip_check_time:.2f}ms: {type(ip_check_error).__name__}: {str(ip_check_error)}")
-                        # Don't fail the whole request if IP check fails, just log it
+                        raise RuntimeError(f"VPN IP check failed: {str(ip_check_error)}")
                 
                 video_path = None
                 use_stealth_fallback = False  # Track if we're using stealth browser fallback
@@ -1603,10 +1657,11 @@ async def _capture_raw_screenshot_in_new_browser(
                 except asyncio.TimeoutError:
                     ip_check_time = (time.time() - ip_check_start) * 1000
                     log_error(f"[VPN] IP check timed out after {ip_check_time:.2f}ms")
+                    raise RuntimeError(f"VPN IP check timed out after {ip_check_time:.2f}ms")
                 except Exception as ip_check_error:
                     ip_check_time = (time.time() - ip_check_start) * 1000
                     log_error(f"[VPN] IP check failed after {ip_check_time:.2f}ms: {type(ip_check_error).__name__}: {str(ip_check_error)}")
-                    # Don't fail the whole request if IP check fails, just log it
+                    raise RuntimeError(f"VPN IP check failed: {str(ip_check_error)}")
             
             try:
                 if progress_cb:
@@ -2121,6 +2176,9 @@ async def _obtain_vpn_proxy_for_request(
             except Exception:
                 pass
         return proxy_url, container_id, None, release_group, group_id
+
+    # Check for any idle proxies that are close to destruction to avoid instance limits
+    await _wait_for_idle_proxies_if_needed(country, city)
 
     proxy_url, container_id, location_key = await _get_or_create_shared_proxy(country, city)
     if not proxy_url or not location_key:

@@ -716,7 +716,7 @@
 
     updateAbsoluteTime();
 
-    // WebSocket live updates
+    // WebSocket live updates & Polling fallback
     (function() {
         const backendWsUrl = (function() {
             const publicBase = "{{ backend_ws_public_url|default('', true) }}";
@@ -726,18 +726,13 @@
             }
             const loc = window.location;
             const proto = loc.protocol === 'https:' ? 'wss' : 'ws';
-            const host = loc.hostname + ':8000';
+            // Use the same host/port as the page is served from
+            const host = loc.host; 
             return `${proto}://${host}/ws/tasks/${taskId}`;
         })();
 
         let ws;
-        try {
-            ws = new WebSocket(backendWsUrl);
-        } catch (e) {
-            console.warn('WebSocket not available', e);
-            return;
-        }
-
+        let pollInterval;
         const statusBadge = document.getElementById('status-badge');
         const pendingBox = document.getElementById('pending-box');
         const pendingStatus = document.getElementById('pending-status');
@@ -749,6 +744,9 @@
         const screenshotSection = document.getElementById('screenshot-section');
         const recordingSection = document.getElementById('recording-section');
         const downloadSection = document.getElementById('download-section');
+        
+        // Current state tracking to avoid redundant updates
+        let currentState = "{{ task.status }}";
 
         function updateStatus(status, icon) {
             if (statusBadge) {
@@ -820,107 +818,201 @@
             `;
         }
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (!data || data.task_id !== taskId) return;
+        function handleTaskState(status, errorMsg = null) {
+            currentState = status;
+            
+            if (status === 'running' || status === 'queued') {
+                if (pendingBox) pendingBox.classList.remove('hidden');
+                if (errorBox) errorBox.classList.add('hidden');
+                if (resultSection) resultSection.classList.add('hidden');
+                updateStatus(status, status === 'running' ? '⟳' : '⏳');
+            } else if (status === 'failed') {
+                updateStatus('failed', '✗');
+                if (pendingBox) pendingBox.classList.add('hidden');
+                if (resultSection) resultSection.classList.add('hidden');
+                if (errorBox) {
+                    errorBox.classList.remove('hidden');
+                    if (errorText) errorText.textContent = errorMsg || 'No error details available';
+                }
+                showToast('error', 'Task Failed', 'The task has failed. Check error details above.');
+                stopPolling();
+            } else if (status === 'completed') {
+                updateStatus('completed', '✓');
+                if (pendingBox) pendingBox.classList.add('hidden');
+                if (errorBox) errorBox.classList.add('hidden');
                 
-                if (data.status === 'running' && data.stage) {
-                    try {
-                        stageLog.push(formatStage(data));
-                        if (stageLog.length > 50) stageLog.shift();
-                        renderStages();
-                    } catch (e) {}
-                }
-
-                if (data.status === 'running' || data.status === 'queued') {
-                    if (pendingBox) pendingBox.classList.remove('hidden');
-                    if (errorBox) errorBox.classList.add('hidden');
-                    if (resultSection) resultSection.classList.add('hidden');
-                    updateStatus(data.status, data.status === 'running' ? '⟳' : '⏳');
-                } else if (data.status === 'failed') {
-                    updateStatus('failed', '✗');
-                    if (pendingBox) pendingBox.classList.add('hidden');
-                    if (resultSection) resultSection.classList.add('hidden');
-                    if (errorBox) {
-                        errorBox.classList.remove('hidden');
-                        if (errorText) errorText.textContent = data.error || 'No error details available';
-                    }
-                    showToast('error', 'Task Failed', 'The task has failed. Check error details above.');
-                } else if (data.status === 'completed') {
-                    updateStatus('completed', '✓');
-                    if (pendingBox) pendingBox.classList.add('hidden');
-                    if (errorBox) errorBox.classList.add('hidden');
-                    
-                    // Fetch updated task info
-                    fetch(`/api/task/${taskId}`)
-                        .then(r => r.json())
-                        .then(payload => {
-                            const t = payload && payload.task ? payload.task : null;
-                            if (!t) return;
-                            
-                            if (taskFormatEl) taskFormatEl.textContent = (t.result_format || 'N/A').toUpperCase();
-                            
-                            const downloadLink = document.getElementById('download-link');
-                            if (downloadLink && t.result_file) {
-                                downloadLink.href = `/media/${t.result_file}`;
+                // Fetch updated task info
+                fetch(`/api/task/${taskId}`)
+                    .then(r => r.json())
+                    .then(payload => {
+                        const t = payload && payload.task ? payload.task : null;
+                        if (!t) return;
+                        
+                        if (taskFormatEl) taskFormatEl.textContent = (t.result_format || 'N/A').toUpperCase();
+                        
+                        const downloadLink = document.getElementById('download-link');
+                        if (downloadLink && t.result_file) {
+                            downloadLink.href = `/media/${t.result_file}`;
+                        }
+                        
+                        if (t.type === 'screenshot') {
+                            const img = document.getElementById('result-image');
+                            if (img && t.result_file) {
+                                // Add cache buster and error retry
+                                const loadWithRetry = (url, attempts = 3) => {
+                                    img.src = url;
+                                    img.onerror = () => {
+                                        if (attempts > 0) {
+                                            console.log('Image load failed, retrying in 1s...', attempts);
+                                            setTimeout(() => {
+                                                // Add/update timestamp to bypass cache
+                                                const cleanUrl = url.split('?')[0];
+                                                loadWithRetry(`${cleanUrl}?t=${new Date().getTime()}`, attempts - 1);
+                                            }, 1000);
+                                        } else {
+                                            console.error('Failed to load image after retries');
+                                            showToast('error', 'Image Load Error', 'Could not load screenshot. Try refreshing.');
+                                        }
+                                    };
+                                };
+                                loadWithRetry(`/media/${t.result_file}?t=${new Date().getTime()}`);
                             }
-                            
-                            if (t.type === 'screenshot') {
-                                const img = document.getElementById('result-image');
-                                if (img && t.result_file) {
-                                    img.src = `/media/${t.result_file}`;
-                                }
-                                if (screenshotSection) screenshotSection.classList.remove('hidden');
-                                if (recordingSection) recordingSection.classList.add('hidden');
-                            } else if (t.type === 'recording') {
-                                const source = document.getElementById('video-source');
-                                const video = document.getElementById('result-video');
-                                if (source && video && t.result_file) {
-                                    source.src = `/media/${t.result_file}`;
-                                    video.load();
-                                }
-                                if (screenshotSection) screenshotSection.classList.add('hidden');
-                                if (recordingSection) recordingSection.classList.remove('hidden');
+                            if (screenshotSection) screenshotSection.classList.remove('hidden');
+                            if (recordingSection) recordingSection.classList.add('hidden');
+                        } else if (t.type === 'recording') {
+                            const source = document.getElementById('video-source');
+                            const video = document.getElementById('result-video');
+                            if (source && video && t.result_file) {
+                                source.src = `/media/${t.result_file}`;
+                                video.load();
                             }
-                            
-                            if (resultSection) resultSection.classList.remove('hidden');
-                            if (downloadSection) downloadSection.classList.remove('hidden');
-                            // Show file size if available
-                            try {
-                                const meta = document.getElementById('file-meta');
-                                if (meta && t.result_file) {
-                                    fetch(`/media/${t.result_file}`, { method: 'HEAD' })
-                                        .then(r => {
-                                            const size = r.headers.get('Content-Length');
-                                            if (size) {
-                                                const bytes = parseInt(size, 10);
-                                                const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`);
-                                                meta.textContent = ` • ${human}`;
-                                            }
-                                        })
-                                        .catch(()=>{});
-                                }
-                            } catch(e) {}
-                            
-                            showToast('success', 'Task Completed!', `Your ${t.type} is ready for download`);
-                        })
-                        .catch(err => {
-                            console.error('Failed to fetch task details:', err);
-                        });
-                }
-            } catch (e) {
-                console.warn('Bad WebSocket message', e);
+                            if (screenshotSection) screenshotSection.classList.add('hidden');
+                            if (recordingSection) recordingSection.classList.remove('hidden');
+                        }
+                        
+                        if (resultSection) resultSection.classList.remove('hidden');
+                        if (downloadSection) downloadSection.classList.remove('hidden');
+                        // Show file size if available
+                        try {
+                            const meta = document.getElementById('file-meta');
+                            if (meta && t.result_file) {
+                                fetch(`/media/${t.result_file}`, { method: 'HEAD' })
+                                    .then(r => {
+                                        const size = r.headers.get('Content-Length');
+                                        if (size) {
+                                            const bytes = parseInt(size, 10);
+                                            const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`);
+                                            meta.textContent = ` • ${human}`;
+                                        }
+                                    })
+                                    .catch(()=>{});
+                            }
+                        } catch(e) {}
+                        
+                        showToast('success', 'Task Completed!', `Your ${t.type} is ready for download`);
+                        stopPolling();
+                    })
+                    .catch(err => {
+                        console.error('Failed to fetch task details:', err);
+                    });
             }
-        };
+        }
 
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+        function setupWebSocket() {
+            console.log('WebSocket: Initializing connection...');
+            try {
+                console.log('WebSocket: Connecting to', backendWsUrl);
+                ws = new WebSocket(backendWsUrl);
+                
+                ws.onopen = () => {
+                    console.log('WebSocket: Connection opened successfully');
+                    // If polling was active, stop it now that we have a connection
+                    stopPolling();
+                };
 
-        ws.onclose = () => {
-            console.log('WebSocket connection closed');
-        };
+                ws.onmessage = (event) => {
+                    console.log('WebSocket: Message received', event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (!data || data.task_id !== taskId) return;
+                        
+                        if (data.status === 'running' && data.stage) {
+                            try {
+                                stageLog.push(formatStage(data));
+                                if (stageLog.length > 50) stageLog.shift();
+                                renderStages();
+                            } catch (e) {}
+                        }
+
+                        // Update state if it changed or if it's a progress update
+                        handleTaskState(data.status, data.error);
+                        
+                    } catch (e) {
+                        console.warn('Bad WebSocket message', e);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    // Fallback to polling on error
+                    startPolling();
+                };
+
+                ws.onclose = (event) => {
+                    console.log('WebSocket connection closed:', event.code, event.reason, event.wasClean);
+                    // Fallback to polling on close if not terminal
+                    startPolling();
+                };
+            } catch (e) {
+                console.warn('WebSocket not available', e);
+                startPolling();
+            }
+        }
+
+        function startPolling() {
+            // Avoid duplicates
+            if (pollInterval) return;
+
+            // Only poll if not in terminal state
+            if (currentState === 'completed' || currentState === 'failed') return;
+
+            console.log('Starting polling fallback...');
+            pollInterval = setInterval(() => {
+                fetch(`/api/task/${taskId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && data.task) {
+                            const t = data.task;
+                            // If status is different from what we think it is, update
+                            if (t.status !== currentState) {
+                                console.log('Polling detected status change:', t.status);
+                                handleTaskState(t.status, t.error);
+                            }
+                        }
+                    })
+                    .catch(e => console.error("Polling error:", e));
+            }, 3000); // Poll every 3 seconds
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                console.log('Stopping polling (WebSocket active)');
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        // Initialize
+        setupWebSocket();
+        
+        // Safety check: if WS is not connected after 3s, start polling
+        setTimeout(() => {
+            if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) {
+                console.log('WebSocket connection timed out or failed, ensuring polling is active');
+                startPolling();
+            }
+        }, 3000);
+
     })();
 </script>
 {% endblock %}
