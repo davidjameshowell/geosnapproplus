@@ -1,6 +1,10 @@
 # Values for Personal Cluster Deployment
 # Usage: helm upgrade --install geosnappro deploy/charts/geosnappro -f deploy/charts/geosnappro/values-personal.yaml
 
+global:
+  imagePullSecrets:
+    - name: ghcr-creds-regcred
+
 frontend:
   ingress:
     enabled: true
