@@ -11,256 +11,298 @@
             <p class="text-gray-600">Manage your screenshots and recordings</p>
         </div>
         <div class="mt-4 md:mt-0">
-            <a href="/submit" class="inline-flex items-center bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition shadow-md hover:shadow-lg">
+            <a href="/submit"
+                class="inline-flex items-center bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition shadow-md hover:shadow-lg">
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                 </svg>
                 Create New Task
             </a>
         </div>
     </div>
 
-    {% if tasks %}
-    <!-- Filters and Search -->
-    <div class="bg-white rounded-lg shadow-md p-4 mb-6">
-        <div class="flex flex-col md:flex-row gap-4">
-            <!-- Search -->
-            <div class="flex-1">
-                <div class="relative">
-                    <input type="text" id="searchInput" placeholder="Search by URL..." 
-                           class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    <svg class="absolute left-3 top-2.5 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                    </svg>
-                </div>
-            </div>
-
-            <!-- Type Filter -->
-            <div>
-                <select id="typeFilter" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    <option value="all">All Types</option>
-                    <option value="screenshot">📸 Screenshots</option>
-                    <option value="recording">🎥 Recordings</option>
-                </select>
-            </div>
-
-            <!-- Status Filter -->
-            <div>
-                <select id="statusFilter" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    <option value="all">All Statuses</option>
-                    <option value="completed">✓ Completed</option>
-                    <option value="running">⟳ Running</option>
-                    <option value="pending">⏳ Pending</option>
-                    <option value="failed">✗ Failed</option>
-                </select>
-            </div>
-
-            <!-- Sort -->
-            <div>
-                <select id="sortOrder" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
-                    <option value="status">By Status</option>
-                </select>
-            </div>
-        </div>
-
-        <!-- Active Filters Display -->
-        <div id="activeFilters" class="mt-3 hidden">
-            <div class="flex items-center space-x-2">
-                <span class="text-sm text-gray-600">Active filters:</span>
-                <div id="filterTags" class="flex flex-wrap gap-2"></div>
-                <button id="clearFilters" class="text-sm text-blue-600 hover:text-blue-700 font-medium ml-2">
-                    Clear all
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Task Count -->
-    <div class="mb-4 flex items-center justify-between">
-        <p class="text-sm text-gray-600">
-            Showing <span id="visibleCount" class="font-semibold">{{ tasks|length }}</span> of 
-            <span id="totalCount" class="font-semibold">{{ tasks|length }}</span> tasks
-        </p>
-        <div class="flex items-center space-x-2">
-            <label class="flex items-center text-sm text-gray-600">
-                <input type="checkbox" id="autoRefresh" checked class="mr-2 rounded">
-                Auto-refresh
-            </label>
-        </div>
-    </div>
-
-    <!-- Tasks Grid -->
-    <div id="tasksList" class="grid grid-cols-1 gap-4">
-        {% for task in tasks %}
-        <div class="task-card bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 hover:border-blue-300"
-             data-task-id="{{ task.id }}"
-             data-type="{{ task.type }}"
-             data-status="{{ task.status }}"
-             data-url="{{ task.url|lower }}"
-             data-timestamp="{{ task.timestamp }}">
-            
-            <div class="flex flex-col md:flex-row">
-                <!-- Left: Icon & Status -->
-                <div class="flex-shrink-0 p-6 flex flex-col items-center justify-center bg-gradient-to-br {% if task.type == 'screenshot' %}from-blue-50 to-blue-100{% else %}from-purple-50 to-purple-100{% endif %}">
-                    <div class="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-md mb-2">
-                        <span class="text-3xl">{% if task.type == 'screenshot' %}📸{% else %}🎥{% endif %}</span>
+    <div id="tasksContent" class="{% if not tasks %}hidden{% endif %}">
+        <!-- Filters and Search -->
+        <div class="bg-white rounded-lg shadow-md p-4 mb-6">
+            <div class="flex flex-col md:flex-row gap-4">
+                <!-- Search -->
+                <div class="flex-1">
+                    <div class="relative">
+                        <input type="text" id="searchInput" placeholder="Search by URL..."
+                            class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <svg class="absolute left-3 top-2.5 w-5 h-5 text-gray-400" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
                     </div>
-                    <span class="text-xs font-medium {% if task.type == 'screenshot' %}text-blue-700{% else %}text-purple-700{% endif %}">
-                        {{ task.type|upper }}
-                    </span>
                 </div>
 
-                <!-- Center: Task Info -->
-                <div class="flex-1 p-6">
-                    <!-- Status Badge -->
-                    <div class="flex items-center mb-3">
-                        <span class="status-badge px-3 py-1 text-xs font-semibold rounded-full inline-flex items-center
-                                     {% if task.status == 'completed' %}bg-green-100 text-green-800 border border-green-200
-                                     {% elif task.status == 'running' %}bg-blue-100 text-blue-800 border border-blue-200
-                                     {% elif task.status == 'failed' %}bg-red-100 text-red-800 border border-red-200
-                                     {% else %}bg-yellow-100 text-yellow-800 border border-yellow-200{% endif %}"
-                              id="status-{{ task.id }}">
-                            <span class="status-icon mr-1.5">
-                                {% if task.status == 'completed' %}✓
-                                {% elif task.status == 'running' %}⟳
-                                {% elif task.status == 'failed' %}✗
-                                {% else %}⏳{% endif %}
-                            </span>
-                            <span class="status-text">{{ task.status|upper }}</span>
+                <!-- Type Filter -->
+                <div>
+                    <select id="typeFilter"
+                        class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="all">All Types</option>
+                        <option value="screenshot">📸 Screenshots</option>
+                        <option value="recording">🎥 Recordings</option>
+                    </select>
+                </div>
+
+                <!-- Status Filter -->
+                <div>
+                    <select id="statusFilter"
+                        class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="all">All Statuses</option>
+                        <option value="completed">✓ Completed</option>
+                        <option value="running">⟳ Running</option>
+                        <option value="pending">⏳ Pending</option>
+                        <option value="failed">✗ Failed</option>
+                    </select>
+                </div>
+
+                <!-- Sort -->
+                <div>
+                    <select id="sortOrder"
+                        class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="newest">Newest First</option>
+                        <option value="oldest">Oldest First</option>
+                        <option value="status">By Status</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Active Filters Display -->
+            <div id="activeFilters" class="mt-3 hidden">
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm text-gray-600">Active filters:</span>
+                    <div id="filterTags" class="flex flex-wrap gap-2"></div>
+                    <button id="clearFilters" class="text-sm text-blue-600 hover:text-blue-700 font-medium ml-2">
+                        Clear all
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task Count -->
+        <div class="mb-4 flex items-center justify-between">
+            <p class="text-sm text-gray-600">
+                Showing <span id="visibleCount" class="font-semibold">{{ tasks|length }}</span> of
+                <span id="totalCount" class="font-semibold">{{ tasks|length }}</span> tasks
+            </p>
+            <div class="flex items-center space-x-2">
+                <label class="flex items-center text-sm text-gray-600">
+                    <input type="checkbox" id="autoRefresh" checked class="mr-2 rounded">
+                    Auto-refresh
+                </label>
+            </div>
+        </div>
+
+        <!-- Tasks Grid -->
+        <div id="tasksList" class="grid grid-cols-1 gap-4">
+            {% for task in tasks %}
+            <div class="task-card bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 hover:border-blue-300"
+                data-task-id="{{ task.id }}" data-type="{{ task.type }}" data-status="{{ task.status }}"
+                data-url="{{ task.url|lower }}" data-timestamp="{{ task.timestamp }}">
+
+                <div class="flex flex-col md:flex-row">
+                    <!-- Left: Icon & Status -->
+                    <div
+                        class="flex-shrink-0 p-6 flex flex-col items-center justify-center bg-gradient-to-br {% if task.type == 'screenshot' %}from-blue-50 to-blue-100{% else %}from-purple-50 to-purple-100{% endif %}">
+                        <div class="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-md mb-2">
+                            <span class="text-3xl">{% if task.type == 'screenshot' %}📸{% else %}🎥{% endif %}</span>
+                        </div>
+                        <span
+                            class="text-xs font-medium {% if task.type == 'screenshot' %}text-blue-700{% else %}text-purple-700{% endif %}">
+                            {{ task.type|upper }}
                         </span>
-                        
+                    </div>
+
+                    <!-- Center: Task Info -->
+                    <div class="flex-1 p-6">
+                        <!-- Status Badge -->
+                        <div class="flex items-center mb-3">
+                            <span class="status-badge px-3 py-1 text-xs font-semibold rounded-full inline-flex items-center
+                                         {% if task.status == 'completed' %}bg-green-100 text-green-800 border border-green-200
+                                         {% elif task.status == 'running' %}bg-blue-100 text-blue-800 border border-blue-200
+                                         {% elif task.status == 'failed' %}bg-red-100 text-red-800 border border-red-200
+                                         {% else %}bg-yellow-100 text-yellow-800 border border-yellow-200{% endif %}"
+                                id="status-{{ task.id }}">
+                                <span class="status-icon mr-1.5">
+                                    {% if task.status == 'completed' %}✓
+                                    {% elif task.status == 'running' %}⟳
+                                    {% elif task.status == 'failed' %}✗
+                                    {% else %}⏳{% endif %}
+                                </span>
+                                <span class="status-text">{{ task.status|upper }}</span>
+                            </span>
+
+                            {% if task.status == 'running' %}
+                            <div class="ml-2 flex space-x-1">
+                                <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
+                                    style="animation-delay: 0ms"></div>
+                                <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
+                                    style="animation-delay: 150ms"></div>
+                                <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
+                                    style="animation-delay: 300ms"></div>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- URL -->
+                        <div class="mb-3">
+                            <a href="{{ task.url }}" target="_blank"
+                                class="text-gray-900 font-medium hover:text-blue-600 transition flex items-center group">
+                                <span class="truncate max-w-md">{{ task.url }}</span>
+                                <svg class="w-4 h-4 ml-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
+                        </div>
+
+                        <!-- Metadata -->
+                        <div class="flex flex-wrap gap-4 text-sm text-gray-600">
+                            <div class="flex items-center">
+                                <svg class="w-4 h-4 mr-1.5 text-gray-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span class="timestamp" data-timestamp="{{ task.timestamp }}">{{ task.timestamp
+                                    }}</span>
+                            </div>
+                            <div class="flex items-center">
+                                <svg class="w-4 h-4 mr-1.5 text-gray-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                                </svg>
+                                <span class="font-mono">{{ task.id[:8] }}</span>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar (for running tasks) -->
                         {% if task.status == 'running' %}
-                        <div class="ml-2 flex space-x-1">
-                            <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
-                            <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
-                            <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                        <div class="mt-3">
+                            <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                <div class="bg-blue-600 h-2 rounded-full animate-pulse" style="width: 60%"></div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Error Message (for failed tasks) -->
+                        {% if task.status == 'failed' %}
+                        <div class="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <p class="text-xs text-red-700 flex items-start">
+                                <svg class="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd"
+                                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                                <span>Task failed. Click "View Details" to see error information.</span>
+                            </p>
                         </div>
                         {% endif %}
                     </div>
 
-                    <!-- URL -->
-                    <div class="mb-3">
-                        <a href="{{ task.url }}" target="_blank" class="text-gray-900 font-medium hover:text-blue-600 transition flex items-center group">
-                            <span class="truncate max-w-md">{{ task.url }}</span>
-                            <svg class="w-4 h-4 ml-2 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                    <!-- Right: Actions -->
+                    <div
+                        class="flex-shrink-0 p-6 flex flex-col justify-center space-y-2 border-t md:border-t-0 md:border-l border-gray-200">
+                        <a href="/task/{{ task.id }}"
+                            class="flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm hover:shadow-md text-sm font-medium">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                             </svg>
+                            View Details
                         </a>
-                    </div>
 
-                    <!-- Metadata -->
-                    <div class="flex flex-wrap gap-4 text-sm text-gray-600">
-                        <div class="flex items-center">
-                            <svg class="w-4 h-4 mr-1.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                            </svg>
-                            <span class="timestamp" data-timestamp="{{ task.timestamp }}">{{ task.timestamp }}</span>
-                        </div>
-                        <div class="flex items-center">
-                            <svg class="w-4 h-4 mr-1.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
-                            </svg>
-                            <span class="font-mono">{{ task.id[:8] }}</span>
-                        </div>
-                    </div>
-
-                    <!-- Progress Bar (for running tasks) -->
-                    {% if task.status == 'running' %}
-                    <div class="mt-3">
-                        <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div class="bg-blue-600 h-2 rounded-full animate-pulse" style="width: 60%"></div>
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    <!-- Error Message (for failed tasks) -->
-                    {% if task.status == 'failed' %}
-                    <div class="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                        <p class="text-xs text-red-700 flex items-start">
-                            <svg class="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
-                            </svg>
-                            <span>Task failed. Click "View Details" to see error information.</span>
-                        </p>
-                    </div>
-                    {% endif %}
-                </div>
-
-                <!-- Right: Actions -->
-                <div class="flex-shrink-0 p-6 flex flex-col justify-center space-y-2 border-t md:border-t-0 md:border-l border-gray-200">
-                    <a href="/task/{{ task.id }}" 
-                       class="flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm hover:shadow-md text-sm font-medium">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                        </svg>
-                        View Details
-                    </a>
-                    
-                    {% if task.status == 'completed' %}
-                    <button onclick="downloadTask('{{ task.id }}')" 
+                        {% if task.status == 'completed' %}
+                        <button onclick="downloadTask('{{ task.id }}')"
                             class="flex items-center justify-center px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition text-sm font-medium">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                        </svg>
-                        Download
-                    </button>
-                    {% endif %}
-                    
-                    {% if task.status == 'failed' %}
-                    <button onclick="retryTask('{{ task.id }}')" 
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download
+                        </button>
+                        {% endif %}
+
+                        {% if task.status == 'failed' %}
+                        <button onclick="retryTask('{{ task.id }}')"
                             class="flex items-center justify-center px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition text-sm font-medium">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                        </svg>
-                        Retry
-                    </button>
-                    {% endif %}
-                    
-                    <button onclick="confirmDelete('{{ task.id }}', '{{ task.url }}')" 
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Retry
+                        </button>
+                        {% endif %}
+
+                        <button onclick="confirmDelete('{{ task.id }}', '{{ task.url }}')"
                             class="flex items-center justify-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-red-100 hover:text-red-700 transition text-sm font-medium">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                        </svg>
-                        Delete
-                    </button>
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Delete
+                        </button>
+                    </div>
                 </div>
             </div>
+            {% endfor %}
         </div>
-        {% endfor %}
+
+        <!-- No Results Message -->
+        <div id="noResults" class="hidden text-center py-12 bg-white rounded-lg shadow">
+            <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p class="text-gray-500 text-lg mb-2">No tasks found</p>
+            <p class="text-gray-400 text-sm">Try adjusting your filters or search query</p>
+        </div>
     </div>
 
-    <!-- No Results Message -->
-    <div id="noResults" class="hidden text-center py-12 bg-white rounded-lg shadow">
-        <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <p class="text-gray-500 text-lg mb-2">No tasks found</p>
-        <p class="text-gray-400 text-sm">Try adjusting your filters or search query</p>
-    </div>
-
-    {% else %}
     <!-- Empty State -->
-    <div class="text-center py-16 bg-white rounded-xl shadow-lg">
+    <div id="emptyState" class="{% if tasks %}hidden{% endif %} text-center py-16 bg-white rounded-xl shadow-lg">
         <div class="mb-6">
             <svg class="w-24 h-24 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
         </div>
         <h3 class="text-2xl font-bold text-gray-900 mb-2">No tasks yet</h3>
         <p class="text-gray-600 mb-6 max-w-md mx-auto">
             Get started by creating your first screenshot or recording task. It only takes a few seconds!
         </p>
-        <a href="/submit" class="inline-flex items-center bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition shadow-md hover:shadow-lg font-medium">
+        <a href="/submit"
+            class="inline-flex items-center bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition shadow-md hover:shadow-lg font-medium">
             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
             Create Your First Task
         </a>
     </div>
-    {% endif %}
+
+    <script>
+        function checkEmptyState() {
+            const anyVisible = document.querySelectorAll('.task-card').length > 0;
+            const tasksContent = document.getElementById('tasksContent');
+            const emptyState = document.getElementById('emptyState');
+
+            if (!anyVisible) {
+                tasksContent.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+            } else {
+                tasksContent.classList.remove('hidden');
+                emptyState.classList.add('hidden');
+            }
+        }
+    </script>
 </div>
 
 <!-- Delete Confirmation Modal -->
@@ -269,7 +311,8 @@
         <div class="p-6">
             <div class="flex items-center justify-center w-12 h-12 mx-auto bg-red-100 rounded-full mb-4">
                 <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
             </div>
             <h3 class="text-xl font-bold text-gray-900 text-center mb-2">Delete Task?</h3>
@@ -280,12 +323,12 @@
                 <p class="text-sm text-gray-700 break-all" id="deleteTaskUrl"></p>
             </div>
             <div class="flex space-x-3">
-                <button onclick="closeDeleteModal()" 
-                        class="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-medium">
+                <button onclick="closeDeleteModal()"
+                    class="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-medium">
                     Cancel
                 </button>
-                <button id="confirmDeleteBtn" 
-                        class="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium">
+                <button id="confirmDeleteBtn"
+                    class="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium">
                     Delete Task
                 </button>
             </div>
@@ -304,7 +347,9 @@
             </div>
             <button id="toastClose" class="text-gray-400 hover:text-gray-600">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    <path fill-rule="evenodd"
+                        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                        clip-rule="evenodd" />
                 </svg>
             </button>
         </div>
@@ -328,20 +373,20 @@
             error: { border: 'border-red-500', icon: '✗', bg: 'bg-red-50' },
             info: { border: 'border-blue-500', icon: 'ℹ', bg: 'bg-blue-50' }
         };
-        
+
         const style = colors[type] || colors.info;
         toastContent.className = `bg-white rounded-lg shadow-2xl border-l-4 ${style.border} p-4`;
         toastIcon.textContent = style.icon;
         toastTitle.textContent = title;
         toastMessage.textContent = message;
-        
+
         toast.classList.remove('translate-x-full');
-        
+
         setTimeout(() => {
             toast.classList.add('translate-x-full');
         }, 5000);
     }
-    
+
     toastClose.addEventListener('click', () => {
         toast.classList.add('translate-x-full');
     });
@@ -362,7 +407,7 @@
 
     document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
         if (!taskToDelete) return;
-        
+
         try {
             const response = await fetch(`/api/task/${taskToDelete}`, {
                 method: 'DELETE'
@@ -371,7 +416,7 @@
             if (response.ok) {
                 showToast('success', 'Task Deleted', 'The task has been successfully deleted');
                 closeDeleteModal();
-                
+
                 // Remove task card from DOM
                 const taskCard = document.querySelector(`[data-task-id="${taskToDelete}"]`);
                 if (taskCard) {
@@ -439,7 +484,7 @@
         const selectedType = typeFilter.value;
         const selectedStatus = statusFilter.value;
         let visibleCount = 0;
-        
+
         // Update active filters display
         updateActiveFilters();
 
@@ -447,11 +492,11 @@
             const url = card.dataset.url;
             const type = card.dataset.type;
             const status = card.dataset.status;
-            
+
             const matchesSearch = url.includes(searchTerm);
             const matchesType = selectedType === 'all' || type === selectedType;
             const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
-            
+
             if (matchesSearch && matchesType && matchesStatus) {
                 card.style.display = '';
                 visibleCount++;
@@ -462,10 +507,10 @@
 
         // Update counts
         document.getElementById('visibleCount').textContent = visibleCount;
-        
+
         // Show/hide no results message
         noResults.classList.toggle('hidden', visibleCount > 0);
-        
+
         // Sort tasks
         sortTasks();
     }
@@ -474,7 +519,7 @@
         const tasksList = document.getElementById('tasksList');
         const cardsArray = Array.from(taskCards);
         const sortValue = sortOrder.value;
-        
+
         cardsArray.sort((a, b) => {
             if (sortValue === 'newest') {
                 return parseTimestamp(b.dataset.timestamp) - parseTimestamp(a.dataset.timestamp);
@@ -485,20 +530,20 @@
                 return statusOrder[a.dataset.status] - statusOrder[b.dataset.status];
             }
         });
-        
+
         cardsArray.forEach(card => tasksList.appendChild(card));
     }
 
     function updateActiveFilters() {
         const filters = [];
-        
+
         if (searchInput.value) filters.push({ type: 'search', label: `"${searchInput.value}"` });
         if (typeFilter.value !== 'all') filters.push({ type: 'type', label: typeFilter.options[typeFilter.selectedIndex].text });
         if (statusFilter.value !== 'all') filters.push({ type: 'status', label: statusFilter.options[statusFilter.selectedIndex].text });
-        
+
         if (filters.length > 0) {
             activeFilters.classList.remove('hidden');
-            filterTags.innerHTML = filters.map(f => 
+            filterTags.innerHTML = filters.map(f =>
                 `<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
                     ${f.label}
                 </span>`
@@ -528,12 +573,7 @@
         document.getElementById('totalCount').textContent = taskCards.length;
     }
 
-    function checkEmptyState() {
-        const anyVisible = document.querySelectorAll('.task-card').length > 0;
-        if (!anyVisible) {
-            window.location.reload();
-        }
-    }
+
 
     // Absolute Local Time Display
     function updateAbsoluteTimes() {
@@ -609,10 +649,10 @@
 
     function monitorTask(taskId) {
         if (!autoRefresh.checked) return;
-        
+
         // Setup WebSocket if not exists
         if (!wsConnections[taskId]) {
-            const wsUrl = (function() {
+            const wsUrl = (function () {
                 const publicBase = "{{ backend_ws_public_url|default('', true) }}";
                 if (publicBase) {
                     const base = publicBase.replace(/\/$/, '');
@@ -623,11 +663,11 @@
                 const host = location.host;
                 return `${proto}://${host}/ws/tasks/${taskId}`;
             })();
-            
+
             try {
                 const ws = new WebSocket(wsUrl);
                 wsConnections[taskId] = ws;
-                
+
                 ws.onopen = () => {
                     // If polling was active, stop it because WS is now connected
                     if (monitorIntervals[taskId]) {
@@ -646,7 +686,7 @@
                         console.error('WebSocket message error:', e);
                     }
                 };
-                
+
                 ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
                     // Fallback to polling on error
@@ -664,11 +704,11 @@
                 startPollingForTask(taskId);
             }
         }
-        
+
         // We do NOT start polling immediately here anymore.
         // Only if WS fails or takes too long (optional safety timeout could be added, 
         // but 'onerror' usually covers connection refusal).
-        
+
         // Add a safety check: if WS state is not OPEN/CONNECTING after 3s, start polling
         setTimeout(() => {
             const ws = wsConnections[taskId];
@@ -704,15 +744,15 @@
     function updateTaskStatus(taskId, newStatus) {
         const badge = document.getElementById(`status-${taskId}`);
         if (!badge) return;
-        
+
         const statusText = badge.querySelector('.status-text');
         const statusIcon = badge.querySelector('.status-icon');
-        
+
         if (statusText.textContent.toUpperCase() === newStatus.toUpperCase()) return;
-        
+
         // Update text
         statusText.textContent = newStatus.toUpperCase();
-        
+
         // Update icon
         const icons = {
             completed: '✓',
@@ -721,7 +761,7 @@
             pending: '⏳'
         };
         statusIcon.textContent = icons[newStatus] || '⏳';
-        
+
         // Update colors
         const colors = {
             completed: 'bg-green-100 text-green-800 border-green-200',
@@ -729,16 +769,16 @@
             failed: 'bg-red-100 text-red-800 border-red-200',
             pending: 'bg-yellow-100 text-yellow-800 border-yellow-200'
         };
-        
+
         badge.className = `status-badge px-3 py-1 text-xs font-semibold rounded-full inline-flex items-center ${colors[newStatus] || colors.pending}`;
-        
+
         // Show toast for status changes
         if (newStatus === 'completed') {
             showToast('success', 'Task Completed', `Task ${taskId.substring(0, 8)} has finished successfully`);
         } else if (newStatus === 'failed') {
             showToast('error', 'Task Failed', `Task ${taskId.substring(0, 8)} has failed`);
         }
-        
+
         // Update card dataset and strip running UI when done
         const card = document.querySelector(`[data-task-id="${taskId}"]`);
         if (card) {
@@ -766,10 +806,10 @@
         if (newStatus === 'completed' || newStatus === 'failed') {
             const ws = wsConnections[taskId];
             if (ws) {
-                try { ws.close(); } catch (e) {}
+                try { ws.close(); } catch (e) { }
                 delete wsConnections[taskId];
             }
-            
+
             if (monitorIntervals[taskId]) {
                 clearInterval(monitorIntervals[taskId]);
                 delete monitorIntervals[taskId];
@@ -799,14 +839,14 @@
                         const size = r.headers.get('Content-Length');
                         if (!size) return;
                         const bytes = parseInt(size, 10);
-                        const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`);
+                        const human = bytes < 1024 ? `${bytes} B` : (bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
                         const meta = document.createElement('span');
                         meta.className = 'ml-2 text-xs text-gray-500';
                         meta.textContent = `· ${human}`;
                         const header = card.querySelector('.flex-1 .mb-3');
                         if (header) header.appendChild(meta);
-                    }).catch(()=>{});
-                }).catch(()=>{});
+                    }).catch(() => { });
+                }).catch(() => { });
             }
         });
     })();
@@ -823,7 +863,7 @@
             // Close all
             Object.values(wsConnections).forEach(ws => ws.close());
             Object.keys(wsConnections).forEach(key => delete wsConnections[key]);
-            
+
             Object.values(monitorIntervals).forEach(iv => clearInterval(iv));
             Object.keys(monitorIntervals).forEach(key => delete monitorIntervals[key]);
         }
