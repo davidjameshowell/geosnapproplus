@@ -26,7 +26,7 @@ import requests
 
 NAMESPACE = os.environ.get("E2E_NAMESPACE", "geosnap-e2e")
 RELEASE_NAME = os.environ.get("E2E_RELEASE_NAME", "geosnappro-e2e")
-CHART_PATH = os.environ.get("E2E_CHART_PATH", str(Path(__file__).parent.parent / "charts" / "geosnappro"))
+CHART_PATH = os.environ.get("E2E_CHART_PATH", str(Path(__file__).parent.parent / "deploy" / "charts" / "geosnappro"))
 PORT_FORWARD_TIMEOUT = int(os.environ.get("E2E_PORT_FORWARD_TIMEOUT", "60"))
 HTTP_TIMEOUT = int(os.environ.get("E2E_HTTP_TIMEOUT", "120"))
 POLL_INTERVAL = float(os.environ.get("E2E_POLL_INTERVAL", "2.0"))

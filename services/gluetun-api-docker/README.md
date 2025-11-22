@@ -590,12 +590,35 @@ fi
 
 ## Configuration
 
-The API can be configured via environment variables in `docker-compose.yml`:
+The API can be configured via environment variables in `deploy/docker-compose.yml`:
 
 - `WIREGUARD_PRIVATE_KEY`: Your Mullvad Wireguard private key
 - `WIREGUARD_ADDRESSES`: Your Wireguard IP address (e.g., "10.68.50.98/32")
 - `INSTANCE_LIMIT`: Maximum number of concurrent VPN containers (default: 1)
 - `LOG_LEVEL`: Logging level (default: INFO)
+
+---
+
+## Docker Compose
+
+To start the API service:
+
+```bash
+docker-compose -f deploy/docker-compose.yml up -d gluetun-api
+```
+
+To view logs:
+
+```bash
+docker-compose -f deploy/docker-compose.yml logs -f gluetun-api
+```
+
+To rebuild and restart:
+
+```bash
+docker-compose -f deploy/docker-compose.yml build gluetun-api
+docker-compose -f deploy/docker-compose.yml up -d gluetun-api
+```
 
 ---
 
@@ -608,7 +631,6 @@ The API can be configured via environment variables in `docker-compose.yml`:
 - Container ports are assigned randomly by Docker
 - Proxy credentials are randomly generated for each container
 - All country and city filters are case-insensitive and support partial matching
-
 ---
 
 ## Docker Compose

@@ -2,7 +2,7 @@ name: Build and Deploy
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
@@ -21,17 +21,17 @@ jobs:
       matrix:
         include:
           - service: frontend
-            context: ./frontend
+            context: ./services/frontend
             image: frontend
-            dockerfile: ./frontend/Dockerfile
+            dockerfile: ./services/frontend/Dockerfile
           - service: screenshot-api
-            context: ./screenshot-api
+            context: ./services/screenshot-api
             image: screenshot-api
-            dockerfile: ./screenshot-api/Dockerfile
+            dockerfile: ./services/screenshot-api/Dockerfile
           - service: gluetun-service
-            context: ./gluetun-k8s
+            context: ./services/gluetun-api-k8s
             image: gluetun-k8s-api
-            dockerfile: ./gluetun-k8s/Dockerfile
+            dockerfile: ./services/gluetun-api-k8s/Dockerfile
 
     steps:
       - name: Checkout repository
@@ -73,11 +73,11 @@ jobs:
         continue-on-error: true
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
-          format: 'table'
-          exit-code: '1'
+          format: "table"
+          exit-code: "1"
           ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
 
   deploy:
     needs: build-images
@@ -100,7 +100,7 @@ jobs:
         run: |
           # Create ~/.kube directory if it doesn't exist
           mkdir -p ~/.kube
-          
+
           # Create a kubeconfig file with insecure-skip-tls-verify
           cat > ~/.kube/config << EOF
           apiVersion: v1
@@ -122,13 +122,13 @@ jobs:
             name: tailscale-k8s
           current-context: tailscale-k8s
           EOF
-          
+
           # Set proper permissions
           chmod 600 ~/.kube/config
 
       - name: Deploy with Helm
         run: |
-          helm upgrade --install geosnappro ./charts/geosnappro \
+          helm upgrade --install geosnappro ./deploy/charts/geosnappro \
             --namespace geosnappro \
             --create-namespace \
             --set global.imagePullSecrets[0].name=ghcr-creds-regcred \

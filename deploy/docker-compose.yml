@@ -3,7 +3,7 @@ version: "3.9"
 services:
   screenshot-api:
     build:
-      context: ./screenshot-api
+      context: ../services/screenshot-api
       dockerfile: Dockerfile.dev
     container_name: geosnappro-screenshot-api
     ports:
@@ -18,7 +18,7 @@ services:
 
   gluetun-api:
     build:
-      context: ./gluetun-api-docker
+      context: ../services/gluetun-api-docker
       dockerfile: Dockerfile.dev
     container_name: geosnappro-gluetun-api
     ports:
@@ -37,7 +37,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../services/frontend
       dockerfile: Dockerfile
     container_name: geosnappro-frontend
     ports:

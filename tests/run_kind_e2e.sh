@@ -32,6 +32,7 @@
 
 set -Eeuo pipefail
 
+# Paths
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLUSTER_NAME="${CLUSTER_NAME:-geosnap-e2e}"
 NAMESPACE="${NAMESPACE:-geosnap-e2e}"
@@ -48,7 +49,7 @@ PYTEST_ARGS="${PYTEST_ARGS:--v --tb=short}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TMP_DIR="$(mktemp -d)"
 CLUSTER_CREATED=0
-UNIFIED_CHART_PATH="${ROOT_DIR}/charts/geosnappro"
+UNIFIED_CHART_PATH="${ROOT_DIR}/deploy/charts/geosnappro"
 
 log()  { echo "[INFO]  $*"; }
 warn() { echo "[WARN]  $*" >&2; }
@@ -336,7 +337,7 @@ deploy_unified_chart() {
   
   if [ ! -d "${UNIFIED_CHART_PATH}" ]; then
     err "Unified chart not found at ${UNIFIED_CHART_PATH}"
-    err "Expected chart structure: charts/geosnappro/"
+    err "Expected chart structure: deploy/charts/geosnappro/"
     exit 1
   fi
   
@@ -427,9 +428,9 @@ main() {
 
   if [[ "${SKIP_BUILD}" != "true" ]]; then
     log "Building and loading Docker images into Kind cluster..."
-    build_and_load "${GLUETUN_IMAGE_REPO}" "${ROOT_DIR}/gluetun-k8s/Dockerfile" "${ROOT_DIR}/gluetun-k8s"
-    build_and_load "${SCREENSHOT_IMAGE_REPO}" "${ROOT_DIR}/screenshot-api/Dockerfile" "${ROOT_DIR}/screenshot-api"
-    build_and_load "${FRONTEND_IMAGE_REPO}" "${ROOT_DIR}/frontend/Dockerfile" "${ROOT_DIR}/frontend"
+    build_and_load "${GLUETUN_IMAGE_REPO}" "${ROOT_DIR}/services/gluetun-api-k8s/Dockerfile" "${ROOT_DIR}/services/gluetun-api-k8s"
+    build_and_load "${SCREENSHOT_IMAGE_REPO}" "${ROOT_DIR}/services/screenshot-api/Dockerfile" "${ROOT_DIR}/services/screenshot-api"
+    build_and_load "${FRONTEND_IMAGE_REPO}" "${ROOT_DIR}/services/frontend/Dockerfile" "${ROOT_DIR}/services/frontend"
     log "✅ All images built and loaded successfully"
   else
     log "Skipping Docker image build (SKIP_BUILD=true)"

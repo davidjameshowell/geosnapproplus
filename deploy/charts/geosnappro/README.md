@@ -235,9 +235,9 @@ If you were previously using separate charts for each component, you can migrate
    helm install geosnappro ./charts/geosnappro -f unified-values.yaml
    ```
 
-## Values from docker-compose.yml
+## Values from deploy/docker-compose.yml
 
-This chart replicates all configuration from `docker-compose.yml` to ensure parity between Docker Compose and Kubernetes deployments:
+This chart replicates all configuration from `deploy/docker-compose.yml` to ensure parity between Docker Compose and Kubernetes deployments:
 
 ### Screenshot API Mapping
 
