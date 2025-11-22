@@ -28,6 +28,9 @@ frontend:
   image:
     repository: ghcr.io/davidjameshowell/frontend
 
+  env:
+    BACKEND_WS_PUBLIC_URL: ""
+
 screenshotApi:
   image:
     repository: ghcr.io/davidjameshowell/screenshot-api
