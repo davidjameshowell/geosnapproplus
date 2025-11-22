@@ -24,6 +24,10 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "geosnappro.gluetunApi.serviceAccountName" . }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       {{- if .Values.gluetunApi.podSecurityContext }}
       securityContext:
         {{- toYaml .Values.gluetunApi.podSecurityContext | nindent 8 }}

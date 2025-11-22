@@ -20,3 +20,17 @@ frontend:
       - secretName: geosnappro-araec-com-tls
         hosts:
           - geosnappro.araec.com
+
+  mediaVolume:
+    storageClass: "local-path"
+
+  image:
+    repository: ghcr.io/davidjameshowell/frontend
+
+screenshotApi:
+  image:
+    repository: ghcr.io/davidjameshowell/screenshot-api
+
+gluetunApi:
+  image:
+    repository: ghcr.io/davidjameshowell/gluetun-k8s-api
