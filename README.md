@@ -60,6 +60,21 @@ Before you begin, ensure you have the following installed on your machine:
     http://localhost:5000
     ```
 
+## ☸️ Kubernetes Deployment
+
+This project includes a Helm chart for deploying to Kubernetes.
+
+1.  **Deploy with Default Configuration**
+    ```bash
+    helm install geosnappro deploy/charts/geosnappro
+    ```
+
+2.  **Deploy to Personal Cluster (Custom Ingress)**
+    To use the custom Ingress configuration for your personal cluster (e.g., with `nginx` class and `letsencrypt-prod` issuer), use the `values-personal.yaml` file:
+    ```bash
+    helm upgrade --install geosnappro deploy/charts/geosnappro -f deploy/charts/geosnappro/values-personal.yaml
+    ```
+
 ## 📖 Usage
 
 1.  **Dashboard**: Upon logging in (if auth is enabled) or accessing the main page, you will see the dashboard.
